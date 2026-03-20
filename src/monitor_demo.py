@@ -36,20 +36,54 @@ async def main():
         border_style="cyan"
     ))
     
+    from src.ui.telegram_bot import MemerTelegramBot
+    
     w3 = get_async_w3(settings.RPC_URL)
     feature_extractor = FeatureExtractor(w3)
+    
+    # Initialize TG Bot Wrapper
+    tg_bot = MemerTelegramBot(None) # Will set paper_trader later
+    
+    async def handle_trade_event(event_type: str, trade: dict):
+        """Format and send TG alerts for Paper Trades."""
+        if event_type == "BUY":
+            text = (
+                f"🟢 *PAPER BUY ALERT*\n\n"
+                f"Token: `{trade['symbol']}`\n"
+                f"Entry: `${trade['buy_usd']:.2f}`\n"
+                f"M.Cap: `${trade['mcap']:,.0f}`\n"
+                f"Liq: `{trade['liquidity']:.2f} BNB`\n"
+                f"CA: `{trade['token']}`"
+            )
+        else: # SELL
+            profit = (trade["current_price"] - trade["buy_price"]) / trade["buy_price"] * 100
+            emoji = "🚀" if trade["status"] == "HIT_2X" else "🛑"
+            text = (
+                f"{emoji} *PAPER SELL ALERT*\n\n"
+                f"Token: `{trade['symbol']}`\n"
+                f"Status: `{trade['status']}`\n"
+                f"PnL: `{profit:+.2f}%`\n"
+                f"CA: `{trade['token']}`"
+            )
+        await tg_bot.send_alert(text)
+
+    paper_trader = PaperTrader(feature_extractor, on_event=handle_trade_event)
+    tg_bot.paper_trader = paper_trader # Link back
+    
+    # Start Telegram Bot
+    await tg_bot.start()
+
     decision_engine = DecisionEngine()
     model = MomentumModel()
     data_logger = DataLogger("paper_trades.csv")
-    paper_trader = PaperTrader(feature_extractor)
 
     async def process_new_pair(pair_data: dict):
         token_address = pair_data.get("token_address")
         pair_address = pair_data.get("pair_address")
         
         try:
-            # 1. Safety Check
-            safety_result = await check_token_safety(token_address)
+            # 1. Safety Check (Now includes LP Lock Check)
+            safety_result = await check_token_safety(token_address, pair_address)
             is_safe = safety_result.get("is_safe", False)
             
             # 2. Extract Features
@@ -77,7 +111,7 @@ async def main():
                 
         except Exception as e:
             logger.error(f"Error processing {token_address[:8]}: {e}")
-
+ 
     listener = BlockchainListener(w3=w3, callback=process_new_pair)
     
     # Run with a Live Dashboard

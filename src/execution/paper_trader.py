@@ -1,4 +1,6 @@
 import logging
+import csv
+import os
 from datetime import datetime
 from rich.console import Console
 from rich.table import Table
@@ -9,12 +11,50 @@ from src.core.features import FeatureExtractor
 logger = logging.getLogger("PaperTrader")
 console = Console()
 
+OUTCOMES_FILE = "data/outcomes.csv"
+SIM_STATE_FILE = "data/simulation.json"
+INITIAL_BALANCE = 100.0  # USD
+TRADE_AMOUNT = 2.0      # USD
+
 class PaperTrader:
-    def __init__(self, feature_extractor: FeatureExtractor):
+    def __init__(self, feature_extractor: FeatureExtractor, on_event=None):
         self.feature_extractor = feature_extractor
+        self.on_event = on_event # Callback for TG alerts
         self.active_trades = [] # List of dicts
         self.history = []       # List of outcomes
-        self._live = None
+        self.balance = INITIAL_BALANCE
+        self._initialize_log()
+        self._load_sim_state()
+
+    def _initialize_log(self):
+        """Ensure the outcomes file exists with headers."""
+        os.makedirs("data", exist_ok=True)
+        if not os.path.exists(OUTCOMES_FILE):
+            with open(OUTCOMES_FILE, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "timestamp", "token", "symbol", "buy_price_bnb", 
+                    "exit_price_bnb", "pnl_pct", "pnl_usd", "status", "duration_mins"
+                ])
+
+    def _load_sim_state(self):
+        """Load persistent balance from JSON."""
+        if os.path.exists(SIM_STATE_FILE):
+            try:
+                with open(SIM_STATE_FILE, "r") as f:
+                    data = json.load(f)
+                    self.balance = data.get("balance", INITIAL_BALANCE)
+                    logger.info(f"Loaded persistent balance: ${self.balance:.2f}")
+            except Exception as e:
+                logger.error(f"Failed to load sim state: {e}")
+
+    def _save_sim_state(self):
+        """Save persistent balance to JSON."""
+        try:
+            with open(SIM_STATE_FILE, "w") as f:
+                json.dump({"balance": self.balance, "last_updated": datetime.now().isoformat()}, f)
+        except Exception as e:
+            logger.error(f"Failed to save sim state: {e}")
 
     async def add_trade(self, token_address: str, pair_address: str, name: str, symbol: str, mcap: float, liquidity: float):
         """Simulate a buy at the current price."""
@@ -29,6 +69,7 @@ class PaperTrader:
             "pair": pair_address,
             "buy_price": buy_price,
             "current_price": buy_price,
+            "buy_usd": TRADE_AMOUNT,
             "mcap": mcap,
             "liquidity": liquidity,
             "start_time": datetime.now(),
@@ -36,7 +77,36 @@ class PaperTrader:
             "status": "OPEN"
         }
         self.active_trades.append(trade)
-        console.print(f"[bold green]▶ [PAPER BUY][/bold green] [bold cyan]{symbol}[/bold cyan] | Cap: ${mcap:,.0f} | Liq: {liquidity:.2f} BNB")
+        self.balance -= TRADE_AMOUNT
+        self._save_sim_state()
+        
+        console.print(f"[bold green]▶ [PAPER BUY][/bold green] [bold cyan]{symbol}[/bold cyan] | Entry: ${TRADE_AMOUNT:.2f} | Cap: ${mcap:,.0f} | Liq: {liquidity:.2f} BNB")
+        
+        if self.on_event:
+            asyncio.create_task(self.on_event("BUY", trade))
+
+    async def manual_close(self, symbol: str):
+        """Allow manual exit from Telegram."""
+        target_trade = None
+        for trade in self.active_trades:
+            if trade["symbol"].upper() == symbol.upper():
+                target_trade = trade
+                break
+        
+        if target_trade:
+            # Refresh price one last time
+            new_price = await self.feature_extractor.get_token_price_bnb(target_trade["pair"])
+            if new_price > 0:
+                target_trade["current_price"] = new_price
+            
+            target_trade["status"] = "MANUAL_CLOSE"
+            self.active_trades.remove(target_trade)
+            self.history.append(target_trade)
+            self._log_outcome(target_trade)
+            if self.on_event:
+                asyncio.create_task(self.on_event("SELL", target_trade))
+            return True
+        return False
 
     async def monitor_step(self):
         """Check all active trades and return a displayable table."""
@@ -71,8 +141,38 @@ class PaperTrader:
             if trade in self.active_trades:
                 self.active_trades.remove(trade)
                 self.history.append(trade)
+                self._log_outcome(trade)
+                if self.on_event:
+                    asyncio.create_task(self.on_event("SELL", trade))
 
         return self._generate_active_table()
+
+    def _log_outcome(self, trade):
+        """Write the finished trade to CSV and update balance."""
+        duration = (datetime.now() - trade["start_time"]).total_seconds() / 60
+        profit_pct = (trade["current_price"] - trade["buy_price"]) / trade["buy_price"]
+        profit_usd = trade["buy_usd"] * (1 + profit_pct)
+        
+        # Update simulation balance
+        self.balance += profit_usd
+        self._save_sim_state()
+
+        try:
+            with open(OUTCOMES_FILE, "a", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    datetime.now().isoformat(),
+                    trade["token"],
+                    trade["symbol"],
+                    f"{trade['buy_price']:.18f}",
+                    f"{trade['current_price']:.18f}",
+                    f"{profit_pct*100:.2f}",
+                    f"{profit_usd - trade['buy_usd']:.2f}",
+                    trade["status"],
+                    f"{duration:.1f}"
+                ])
+        except Exception as e:
+            logger.error(f"Failed to log outcome: {e}")
 
     def _generate_active_table(self):
         """Generates a table of current open trades."""
@@ -102,16 +202,29 @@ class PaperTrader:
         return table
 
     def _generate_summary_table(self):
-        """Generates a summary of history when no active trades."""
-        table = Table(title="📊 Performance Summary", border_style="green")
+        """Generates a summary of history from CSV for persistent stats."""
+        total = 0
+        hits = 0
+        
+        try:
+            if os.path.exists(OUTCOMES_FILE):
+                with open(OUTCOMES_FILE, "r") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        total += 1
+                        if row["status"] == "HIT_2X":
+                            hits += 1
+        except Exception:
+            pass
+
+        table = Table(title="📊 Lifetime Performance Summary", border_style="green")
         table.add_column("Metric", style="white")
         table.add_column("Value", justify="right", style="cyan")
         
-        successful = len([t for t in self.history if t["status"] == "HIT_2X"])
-        total = len(self.history)
-        win_rate = (successful / total * 100) if total > 0 else 0
+        win_rate = (hits / total * 100) if total > 0 else 0
         
         table.add_row("Total Trades", str(total))
-        table.add_row("2X Hits", f"[bold gold1]{successful}[/bold gold1]")
+        table.add_row("2X Hits", f"[bold gold1]{hits}[/bold gold1]")
         table.add_row("Win Rate", f"{win_rate:.1f}%")
+        table.add_row("Virtual Balance", f"[bold green]${self.balance:.2f}[/bold green]")
         return table
