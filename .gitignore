@@ -1,0 +1,31 @@
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak
+*.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Data and Logs
+data/*.csv
+data/model.json
+*.log
+
+# IDE
+.vscode/
+.idea/
+.project
+.pydevproject
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

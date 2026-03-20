@@ -1,0 +1,26 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# RPC and Wallet Configuration
+RPC_URL = os.getenv("RPC_URL", "https://bsc-dataseed.binance.org/")
+WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "")
+PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
+
+# Contract Addresses (BSC Mainnet)
+FACTORY_ADDRESS = "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73"
+ROUTER_ADDRESS = "0x10ED43C718714eb63d5aA57B78B54704E256024E"
+WBNB_ADDRESS = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"
+
+# Trading Thresholds
+PROBABILITY_THRESHOLD = 0.40  # Lowered for Demo/Paper Trading without trained model
+MIN_LIQUIDITY_BNB = 1.0       # Lowered for Demo/Paper Trading
+MAX_BUY_TAX = 15.0            # Maximum allowed buy tax (%)
+MAX_SELL_TAX = 15.0           # Maximum allowed sell tax (%)
+
+# Execution Limits (Phase 2)
+SLIPPAGE_TOLERANCE_PERCENT = 5.0
+TAKE_PROFIT_MULTIPLIER = 2.0  # 2x target
+STOP_LOSS_PERCENT = 30.0      # -30% stop loss
