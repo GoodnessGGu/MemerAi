@@ -49,11 +49,13 @@ async def main():
         if event_type == "BUY":
             text = (
                 f"🟢 *PAPER BUY ALERT*\n\n"
-                f"Token: `{trade['symbol']}`\n"
-                f"Entry: `${trade['buy_usd']:.2f}`\n"
-                f"M.Cap: `${trade['mcap']:,.0f}`\n"
-                f"Liq: `{trade['liquidity']:.2f} BNB`\n"
-                f"CA: `{trade['token']}`"
+                f"📌 *Token:* `{trade['symbol']}` ({trade['name']})\n"
+                f"💰 *Entry:* `${trade['buy_usd']:.2f}`\n"
+                f"📊 *Stats:* MC `${trade['mcap']:,.0f}` | Liq `{trade['liquidity']:.2f} BNB`\n"
+                f"🏷️ *Meta:* `{trade.get('meta', 'Unknown')}`\n"
+                f"🧠 *ML Prob:* `{trade.get('ml_prob', 0)*100:.1f}%`\n"
+                f"🛡️ *Safety:* `MATCHED` ✅\n"
+                f"📄 *CA:* `{trade['token']}`"
             )
         else: # SELL
             profit = (trade["current_price"] - trade["buy_price"]) / trade["buy_price"] * 100
@@ -105,7 +107,11 @@ async def main():
             decision = decision_engine.make_decision(safety_result, features, ml_probability)
             
             if decision:
-                await paper_trader.add_trade(token_address, pair_address, name, symbol, mcap_usd, liq_bnb)
+                await paper_trader.add_trade(
+                    token_address, pair_address, name, symbol, mcap_usd, liq_bnb,
+                    ml_prob=ml_probability,
+                    meta=safety_result.get("meta", "Generic")
+                )
             else:
                 pass # Silent rejection to keep dashboard clean
                 

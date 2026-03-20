@@ -56,7 +56,7 @@ class PaperTrader:
         except Exception as e:
             logger.error(f"Failed to save sim state: {e}")
 
-    async def add_trade(self, token_address: str, pair_address: str, name: str, symbol: str, mcap: float, liquidity: float):
+    async def add_trade(self, token_address: str, pair_address: str, name: str, symbol: str, mcap: float, liquidity: float, ml_prob: float = 0, meta: str = "Generic"):
         """Simulate a buy at the current price."""
         buy_price = await self.feature_extractor.get_token_price_bnb(pair_address)
         if buy_price == 0:
@@ -72,6 +72,8 @@ class PaperTrader:
             "buy_usd": TRADE_AMOUNT,
             "mcap": mcap,
             "liquidity": liquidity,
+            "ml_prob": ml_prob,
+            "meta": meta,
             "start_time": datetime.now(),
             "max_price": buy_price,
             "status": "OPEN"

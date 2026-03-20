@@ -12,6 +12,8 @@ class MemerTelegramBot:
         self.paper_trader = paper_trader
         self.token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.admin_id = os.getenv("TELEGRAM_ADMIN_ID")
+        if self.admin_id:
+            self.admin_id = str(self.admin_id).replace('"', '').replace("'", "").strip()
         self.app = None
 
     async def start(self):
