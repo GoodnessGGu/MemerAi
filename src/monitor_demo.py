@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import httpx
 from web3 import AsyncWeb3
 from rich.logging import RichHandler
 from rich.console import Console

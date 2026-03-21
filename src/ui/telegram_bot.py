@@ -20,7 +20,8 @@ class MemerTelegramBot:
             logger.warning("TELEGRAM_BOT_TOKEN not found. Telegram bot disabled.")
             return
 
-        self.app = ApplicationBuilder().token(self.token).build()
+        request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+        self.app = ApplicationBuilder().token(self.token).request(request).build()
 
         # Add handlers
         self.app.add_handler(CommandHandler("start", self._start_handler))
