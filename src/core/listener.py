@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import time
 from web3 import AsyncWeb3
 from src.config.settings import FACTORY_ADDRESS, WBNB_ADDRESS
 
@@ -67,25 +68,17 @@ class BlockchainListener:
 
     async def _process_event(self, event):
         """Extracts token details from the PairCreated event."""
-        # The args dictionary contains the decoded event data
         args = event.get('args', {})
         token0 = args.get('token0')
         token1 = args.get('token1')
         pair_address = args.get('pair')
         
-        # We want to identify the new meme token, assuming it's paired with WBNB.
-        # Often newly launched tokens trade against WBNB or BUSD/USDT.
         wbnb_checksum = self.w3.to_checksum_address(WBNB_ADDRESS)
+        new_token = token1 if token0 == wbnb_checksum else token0
         
-        if token0 == wbnb_checksum:
-            new_token = token1
-        elif token1 == wbnb_checksum:
-            new_token = token0
-        else:
-            # Pair doesn't include WBNB directly, might be tricky to value or trade simply
-            new_token = token0 # arbitrarily pick token0 for now or skip
-            
-        timestamp = await self._get_block_timestamp(event.get('blockNumber'))
+        # Fast Timestamp: Using blockNumber + current time instead of full block fetch
+        # This saves 1-2 seconds per event.
+        timestamp = int(time.time()) 
         
         pair_data = {
             "token_address": new_token,
@@ -94,18 +87,7 @@ class BlockchainListener:
             "block_number": event.get('blockNumber')
         }
         
-        logger.info(f"New pair detected: Token {new_token} | Pair {pair_address}")
+        logger.info(f"New pair detected: Token {new_token[:8]} | Pair {pair_address[:8]}")
         
-        # Dispatch to the callback for async processing
         if self.callback:
-            # Create a task to avoid blocking the listener loop
             asyncio.create_task(self.callback(pair_data))
-
-    async def _get_block_timestamp(self, block_number):
-        try:
-            block = await self.w3.eth.get_block(block_number)
-            return block.get('timestamp')
-        except Exception:
-            import time
-            return int(time.time())
-

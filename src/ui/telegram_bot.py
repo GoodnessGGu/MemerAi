@@ -1,3 +1,4 @@
+import csv
 import logging
 import os
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,6 +14,8 @@ class MemerTelegramBot:
         self.paper_trader = paper_trader
         self.token = os.getenv("TELEGRAM_BOT_TOKEN", "").replace('"', '').replace("'", "").strip()
         self.admin_id = os.getenv("TELEGRAM_ADMIN_ID", "").replace('"', '').replace("'", "").strip()
+        self.market_stats = {"scanned": 0, "rejected": 0, "meta_counts": {}}
+        self.shutdown_requested = False
         self.app = None
 
     async def start(self, max_retries: int = 5):
@@ -29,6 +32,8 @@ class MemerTelegramBot:
 
         # Add handlers
         self.app.add_handler(CommandHandler("start", self._start_handler))
+        self.app.add_handler(CommandHandler("set_tp", self._set_tp_handler))
+        self.app.add_handler(CommandHandler("shutdown", self._shutdown_handler))
         self.app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self._button_handler))
         self.app.add_handler(CallbackQueryHandler(self._callback_handler))
 
@@ -69,12 +74,13 @@ class MemerTelegramBot:
         await query.answer()
         
         if query.data.startswith("close_"):
-            symbol = query.data.replace("close_", "")
-            success = await self.paper_trader.manual_close(symbol)
+            token_address = query.data.replace("close_", "")
+            success = await self.paper_trader.manual_close(token_address)
             if success:
-                await query.edit_message_text(f"❌ *Trade Closed:* `{symbol}` manually exited.")
+                # Find symbol for better message
+                await query.edit_message_text(f"❌ *Trade Closed:* Position manually exited.")
             else:
-                await query.edit_message_text(f"⚠️ Failed to close `{symbol}`. Trade might be already closed.")
+                await query.edit_message_text(f"⚠️ Failed to close trade. It might be already closed or timed out.")
 
     async def send_alert(self, text: str):
         """Send a proactive alert to the admin."""
@@ -86,10 +92,11 @@ class MemerTelegramBot:
 
     async def _start_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command and show buttons."""
+        ml_label = "🤖 ML: ON" if self.paper_trader.ml_filter_enabled else "🤖 ML: OFF"
         keyboard = [
             [KeyboardButton("💰 Balance"), KeyboardButton("📡 Active Trades")],
             [KeyboardButton("📜 History"), KeyboardButton("📈 Market Stats")],
-            [KeyboardButton("🔄 Refresh")]
+            [KeyboardButton(ml_label), KeyboardButton("🔄 Refresh")]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
@@ -105,56 +112,143 @@ class MemerTelegramBot:
         if text == "💰 Balance":
             balance_text = (
                 f"💳 *Virtual Simulation Balance*\n\n"
-                f"Current: `${self.paper_trader.balance:.2f}`\n"
-                f"Initial: `$100.00`"
+                f"├ Current: `${self.paper_trader.balance:.2f}`\n"
+                f"├ Initial: `$100.00`\n"
+                f"└ Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯"
             )
             await update.message.reply_text(balance_text, parse_mode="Markdown")
             
         elif text == "📡 Active Trades":
             if not self.paper_trader.active_trades:
-                await update.message.reply_text("No active paper trades at the moment. 😴")
+                await update.message.reply_text("💤 *No active trades.* Monitoring the waves... 🌊", parse_mode="Markdown")
                 return
+            
+            await update.message.reply_text(f"📡 *Monitoring {len(self.paper_trader.active_trades)} Active Positions:*", parse_mode="Markdown")
             
             for t in self.paper_trader.active_trades:
                 profit = (t["current_price"] - t["buy_price"]) / t["buy_price"] * 100
-                emoji = "📈" if profit >= 0 else "📉"
+                emoji = "🚀" if profit >= 10 else "📈" if profit >= 0 else "📉"
+                if profit <= -20: emoji = "⚠️"
+                
                 msg = (
-                    f"{emoji} *{t['symbol']}*\n"
-                    f"└ PnL: `{profit:+.2f}%`\n"
-                    f"└ Cap: `${t['mcap']:,.0f}`\n"
-                    f"└ Liq: `{t['liquidity']:.2f} BNB`\n"
-                    f"└ CA: `{t['token']}`"
+                    f"{emoji} *{t['symbol']}* ({t['meta']})\n"
+                    f"┣ PnL: `{profit:+.2f}%` 💰\n"
+                    f"┣ MC: `${t['mcap']:,.0f}`\n"
+                    f"┣ Liq: `{t['liquidity']:.2f} BNB` 💧\n"
+                    f"┗ `CA: {t['token']}`"
                 )
-                keyboard = [[InlineKeyboardButton("❌ Close Trade", callback_data=f"close_{t['symbol']}")]]
+                keyboard = [[InlineKeyboardButton("❌ Close Trade", callback_data=f"close_{t['token']}")]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="Markdown")
 
         elif text == "📜 History":
-            if not self.paper_trader.history:
-                await update.message.reply_text("Your trade history is empty. Time to find some gems! 💎")
-                return
-
-            total_trades = len(self.paper_trader.history)
-            wins = len([t for t in self.paper_trader.history if t.get("status") == "HIT_2X"])
-            win_rate = (wins / total_trades) * 100
+            # 1. Gather stats from memory
+            mem_history = self.paper_trader.history
             
-            # Calulate total PnL
-            total_pnl = 0
-            for t in self.paper_trader.history:
-                profit = (t["current_price"] - t["buy_price"]) / t["buy_price"] * 100
-                total_pnl += profit
+            # 2. Gather stats from CSV for persistent context
+            csv_total = 0
+            csv_wins = 0
+            csv_pnl = 0.0
+            from src.execution.paper_trader import OUTCOMES_FILE
+            if os.path.exists(OUTCOMES_FILE):
+                try:
+                    with open(OUTCOMES_FILE, "r") as f:
+                        reader = csv.DictReader(f)
+                        for row in reader:
+                            csv_total += 1
+                            status = row["status"]
+                            current_tp = int((self.paper_trader.tp_multiplier - 1) * 100)
+                            if f"HIT_{current_tp}PCT" in status or status == "HIT_20PCT":
+                                csv_wins += 1
+                            csv_pnl += float(row.get("pnl_pct", "0"))
+                except Exception: pass
 
-            msg = (
-                f"📜 *Historical Performance*\n\n"
-                f"Total Trades: `{total_trades}`\n"
-                f"Win Rate: `{win_rate:.1f}%` (2X Hits)\n"
-                f"Avg PnL: `{total_pnl/total_trades:+.2f}%`\n\n"
-                f"_Check 'paper_trades.csv' for full details._"
+            total_trades = csv_total
+            wins = csv_wins
+            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+            avg_pnl = (csv_pnl / total_trades) if total_trades > 0 else 0
+
+            history_msg = (
+                f"📜 *Lifetime Trade History*\n\n"
+                f"📊 *Stats Summary:*\n"
+                f"├ Total Trades: `{total_trades}`\n"
+                f"├ Win Rate: `{win_rate:.1f}%` (Target: +{((self.paper_trader.tp_multiplier-1)*100):.0f}%)\n"
+                f"├ Avg PnL: `{avg_pnl:+.2f}%` per trade\n"
+                f"└ Virtual PnL: `${(self.paper_trader.balance - 100):+.2f}`\n\n"
+                f"_Showing latest outcomes from simulation.json_"
             )
-            await update.message.reply_text(msg, parse_mode="Markdown")
+            await update.message.reply_text(history_msg, parse_mode="Markdown")
 
         elif text == "📈 Market Stats":
-            await update.message.reply_text("📈 *Market Analytics*\n(Coming soon: Total Scanned / Total Rejected / 24h Meta)")
+            scanned = self.market_stats.get("scanned", 0)
+            rejected = self.market_stats.get("rejected", 0)
+            meta_counts = self.market_stats.get("meta_counts", {})
+            
+            conversion = ( (scanned - rejected) / scanned * 100) if scanned > 0 else 0
+            
+            # Find Top Meta
+            top_meta = "N/A"
+            if meta_counts:
+                # Filter out 'Generic' for better insight if others exist
+                meaningful_metas = {k: v for k, v in meta_counts.items() if k != "Generic"}
+                if meaningful_metas:
+                    top_meta = max(meaningful_metas, key=meaningful_metas.get)
+                else:
+                    top_meta = "Generic"
+
+            stats_msg = (
+                f"📊 *Live Market Intelligence*\n\n"
+                f"🔍 *Activity Overview:*\n"
+                f"├ Total Scanned: `{scanned}`\n"
+                f"├ Rejected: `{rejected}`\n"
+                f"└ Accept Rate: `{conversion:.1f}%` ✅\n\n"
+                f"🌋 *Hot Narrative:* `{top_meta}`\n\n"
+                f"_Scanner is running on BSC Mainnet._"
+            )
+            await update.message.reply_text(stats_msg, parse_mode="Markdown")
+
+        elif "🤖 ML:" in text:
+            # Toggle ML Filter
+            self.paper_trader.ml_filter_enabled = not self.paper_trader.ml_filter_enabled
+            self.paper_trader._save_sim_state()
+            
+            status = "ENABLED" if self.paper_trader.ml_filter_enabled else "DISABLED"
+            await update.message.reply_text(f"🤖 *ML Filter {status}!*", parse_mode="Markdown")
+            
+            # Refresh keyboard
+            await self._start_handler(update, context)
 
         elif text == "🔄 Refresh":
             await update.message.reply_text("🔄 Dashboard refreshed!")
+            await self._start_handler(update, context)
+
+    async def _set_tp_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /set_tp <percent> command."""
+        try:
+            if not context.args:
+                await update.message.reply_text("❌ Usage: `/set_tp <percent>`\nExample: `/set_tp 50` for +50% target.", parse_mode="Markdown")
+                return
+            
+            percent = float(context.args[0])
+            if percent <= 0:
+                await update.message.reply_text("❌ Percentage must be greater than 0.")
+                return
+            
+            multiplier = 1 + (percent / 100)
+            self.paper_trader.tp_multiplier = multiplier
+            self.paper_trader._save_sim_state() # Persist change
+            
+            await update.message.reply_text(f"✅ *Success!* New Take-Profit target set to *+{percent:.0f}%*.\n_This will apply to all current and future trades._", parse_mode="Markdown")
+            logger.info(f"User updated TP to +{percent}%")
+            
+        except ValueError:
+            await update.message.reply_text("❌ Invalid number. Please use a number like 20, 50, or 100.")
+    async def _shutdown_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /shutdown command to stop the bot remotely."""
+        if str(update.effective_user.id) != self.admin_id:
+            await update.message.reply_text("⛔ *Unauthorized.* Only the admin can stop the bot.", parse_mode="Markdown")
+            return
+            
+        await update.message.reply_text("🛑 *Shutdown command received.* Stopping Memer AI... Goodbye! 👋", parse_mode="Markdown")
+        logger.warning(f"Shutdown requested by user {update.effective_user.id}")
+        self.shutdown_requested = True

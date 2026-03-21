@@ -90,38 +90,48 @@ async def check_token_safety(token_address: str, pair_address: str = None, clien
         elif any(x in name or x in symbol for x in ["MOON", "SAFE", "GALAXY"]): result["meta"] = "Space Meta 🌌"
 
         # PERFORM HEURISTICS CHECKS
-        # 1. Critical Risks
-        if token_info.get("is_honeypot") == "1": result["risk_flags"].append("is_honeypot")
-        if token_info.get("is_mintable") == "1": result["risk_flags"].append("is_mintable")
-        if token_info.get("cannot_sell_all") == "1": result["risk_flags"].append("cannot_sell_all")
-        if token_info.get("is_blacklisted") == "1": result["risk_flags"].append("has_blacklist")
-            
-        # 2. Trading Taxes
+        fatal_risks = []
+        warning_risks = []
+
+        # 1. Fatal Risks (Immediate Rug/Scam)
+        if token_info.get("is_honeypot") == "1": fatal_risks.append("is_honeypot")
+        if token_info.get("cannot_sell_all") == "1": fatal_risks.append("cannot_sell_all")
+        if token_info.get("is_blacklisted") == "1": fatal_risks.append("has_blacklist")
+        
+        # 2. Warning Risks (High Risk but tradable in simulation)
+        if token_info.get("is_mintable") == "1": warning_risks.append("is_mintable")
+        
+        # 3. Trading Taxes
         try:
             buy_tax = float(token_info.get("buy_tax", "0") or "0") * 100
             sell_tax = float(token_info.get("sell_tax", "0") or "0") * 100
-            if buy_tax > MAX_BUY_TAX * 1.5: result["risk_flags"].append(f"high_buy_{buy_tax:.0f}%")
-            if sell_tax > MAX_SELL_TAX * 1.5: result["risk_flags"].append(f"high_sell_{sell_tax:.0f}%")
-        except Exception: result["risk_flags"].append("tax_err")
+            if buy_tax > 50: fatal_risks.append(f"fatal_buy_tax_{buy_tax:.0f}%")
+            elif buy_tax > MAX_BUY_TAX: warning_risks.append(f"high_buy_{buy_tax:.0f}%")
+            
+            if sell_tax > 50: fatal_risks.append(f"fatal_sell_tax_{sell_tax:.0f}%")
+            elif sell_tax > MAX_SELL_TAX: warning_risks.append(f"high_sell_{sell_tax:.0f}%")
+        except Exception: warning_risks.append("tax_err")
 
-        # 3. Holder Concentration (Relaxed to 25% for paper trading)
+        # 4. Holder Concentration (Warning only)
         holders = token_info.get("holders", [])
         for h in holders[:3]:
             h_addr = h.get("address", "").lower()
             h_pct = float(h.get("percent", "0")) * 100
             if h_addr not in [addr.lower() for addr in BURN_ADDRESSES] and h_pct > 25:
-                result["risk_flags"].append(f"whale_{h_pct:.0f}%")
+                warning_risks.append(f"whale_{h_pct:.0f}%")
 
-        # 4. LP Lock Check (Relaxed to 50% for paper trading)
+        # 5. LP Lock Check (Warning only)
         if pair_address and w3:
             lp_res = await check_lp_lock(w3, pair_address)
             if lp_res["percent"] < 50:
-                result["risk_flags"].append(f"lp_unlocked_{lp_res['percent']:.0f}%")
+                warning_risks.append(f"lp_unlocked_{lp_res['percent']:.0f}%")
             
-        # Determine overall safety
-        if len(result["risk_flags"]) == 0:
-            result["is_safe"] = True
-            
+        # Overall result
+        result["risk_flags"] = fatal_risks + warning_risks
+        result["fatal_count"] = len(fatal_risks)
+        result["warning_count"] = len(warning_risks)
+        result["is_safe"] = len(fatal_risks) == 0 # Permissive logic: safe if no fatals
+        
         return result
             
     except Exception as e:

@@ -1,3 +1,5 @@
+import json
+import asyncio
 import logging
 import csv
 import os
@@ -23,6 +25,8 @@ class PaperTrader:
         self.active_trades = [] # List of dicts
         self.history = []       # List of outcomes
         self.balance = INITIAL_BALANCE
+        self.tp_multiplier = 1.20 # Default +20%
+        self.ml_filter_enabled = True # Default ON
         self._initialize_log()
         self._load_sim_state()
 
@@ -38,21 +42,28 @@ class PaperTrader:
                 ])
 
     def _load_sim_state(self):
-        """Load persistent balance from JSON."""
+        """Load persistent balance and TP from JSON."""
         if os.path.exists(SIM_STATE_FILE):
             try:
                 with open(SIM_STATE_FILE, "r") as f:
                     data = json.load(f)
                     self.balance = data.get("balance", INITIAL_BALANCE)
-                    logger.info(f"Loaded persistent balance: ${self.balance:.2f}")
+                    self.tp_multiplier = data.get("tp_multiplier", 1.20)
+                    self.ml_filter_enabled = data.get("ml_filter_enabled", True)
+                    logger.info(f"Loaded Sim State: Balance=${self.balance:.2f}, ML={self.ml_filter_enabled}")
             except Exception as e:
                 logger.error(f"Failed to load sim state: {e}")
 
     def _save_sim_state(self):
-        """Save persistent balance to JSON."""
+        """Save persistent state to JSON."""
         try:
             with open(SIM_STATE_FILE, "w") as f:
-                json.dump({"balance": self.balance, "last_updated": datetime.now().isoformat()}, f)
+                json.dump({
+                    "balance": self.balance, 
+                    "tp_multiplier": self.tp_multiplier,
+                    "ml_filter_enabled": self.ml_filter_enabled,
+                    "last_updated": datetime.now().isoformat()
+                }, f)
         except Exception as e:
             logger.error(f"Failed to save sim state: {e}")
 
@@ -126,9 +137,10 @@ class PaperTrader:
             profit_pct = (new_price - trade["buy_price"]) / trade["buy_price"] * 100
             elapsed_mins = (datetime.now() - trade["start_time"]).total_seconds() / 60
 
-            if new_price >= trade["buy_price"] * 1.20:  # +20% target
-                console.print(f"[bold gold1]🎯 [+20% HIT!][/bold gold1] {trade['symbol']} (+{profit_pct:.1f}%)")
-                trade["status"] = "HIT_20PCT"
+            if new_price >= trade["buy_price"] * self.tp_multiplier:
+                tp_pct = (self.tp_multiplier - 1) * 100
+                console.print(f"[bold gold1]🎯 [+{tp_pct:.0f}% HIT!][/bold gold1] {trade['symbol']} (+{profit_pct:.1f}%)")
+                trade["status"] = f"HIT_{tp_pct:.0f}PCT"
                 to_remove.append(trade)
             elif new_price <= trade["buy_price"] * 0.70:
                 console.print(f"[bold red]💀 [STOP LOSS][/bold red] {trade['symbol']} ({profit_pct:.1f}%)")
@@ -201,7 +213,29 @@ class PaperTrader:
                 f"{trade['liquidity']:.2f}",
                 f"{age}m"
             )
-        return table
+    async def manual_close(self, token_address):
+        """Force close a trade manually via TG."""
+        target_trade = None
+        for t in self.active_trades:
+            if t["token"].lower() == token_address.lower():
+                target_trade = t
+                break
+        
+        if target_trade:
+            # Update price one last time
+            new_price = await self.feature_extractor.get_token_price_bnb(target_trade["pair"])
+            if new_price > 0:
+                target_trade["current_price"] = new_price
+            
+            target_trade["status"] = "MANUAL_CLOSE"
+            self.active_trades.remove(target_trade)
+            self.history.append(target_trade)
+            self._log_outcome(target_trade)
+            
+            if self.on_event:
+                asyncio.create_task(self.on_event("SELL", target_trade))
+            return True
+        return False
 
     def _generate_summary_table(self):
         """Generates a summary of history from CSV for persistent stats."""

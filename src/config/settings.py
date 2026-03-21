@@ -28,5 +28,8 @@ MAX_SELL_TAX = 15.0           # Maximum allowed sell tax (%)
 
 # Execution Limits (Phase 2)
 SLIPPAGE_TOLERANCE_PERCENT = 5.0
-TAKE_PROFIT_MULTIPLIER = 2.0  # 2x target
+TAKE_PROFIT_MULTIPLIER = 1.2  # +20% target (User preference)
 STOP_LOSS_PERCENT = 30.0      # -30% stop loss
+
+# Simulation / Action Settings
+PERMISSIVE_MODE = True        # If True, allows tokens with "Warning" risks (Unlocked LP, Whales)

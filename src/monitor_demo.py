@@ -48,33 +48,33 @@ async def main():
     feature_extractor = FeatureExtractor(w3)
     
     # Track stats for TG
-    stats = {"scanned": 0, "rejected": 0}
+    stats = {"scanned": 0, "rejected": 0, "meta_counts": {}}
     
     # Initialize TG Bot Wrapper
     tg_bot = MemerTelegramBot(None) # Will set paper_trader later
+    tg_bot.market_stats = stats # Link stats
     
     async def handle_trade_event(event_type: str, trade: dict):
         """Format and send TG alerts for Paper Trades."""
         if event_type == "BUY":
             text = (
-                f"🟢 *PAPER BUY ALERT*\n\n"
-                f"📌 *Token:* `{trade['symbol']}` ({trade['name']})\n"
-                f"💰 *Entry:* `${trade['buy_usd']:.2f}`\n"
-                f"📊 *Stats:* MC `${trade['mcap']:,.0f}` | Liq `{trade['liquidity']:.2f} BNB`\n"
-                f"🏷️ *Meta:* `{trade.get('meta', 'Unknown')}`\n"
-                f"🧠 *ML Prob:* `{trade.get('ml_prob', 0)*100:.1f}%`\n"
-                f"🛡️ *Safety:* `MATCHED` ✅\n"
-                f"📄 *CA:* `{trade['token']}`"
+                f"🚀 *POSITION OPENED*\n\n"
+                f"💎 *Asset:* `{trade['symbol']} ({trade['name'][:15]})`\n"
+                f"💰 *Entry:* `{trade['buy_price']:.8f} BNB`\n"
+                f"📊 *MC:* `${trade['mcap']:,.0f}` | 🌊 *Liq:* `{trade['liquidity']:.2f}`\n"
+                f"🛡️ *Safety:* `{trade.get('meta', 'Generic')}`\n"
+                f"📍 `CA: {trade['token']}`"
             )
         else: # SELL
             profit = (trade["current_price"] - trade["buy_price"]) / trade["buy_price"] * 100
-            emoji = "🚀" if trade["status"] == "HIT_2X" else "🛑"
+            status = trade.get("status", "CLOSED")
+            emoji = "🎯" if "HIT_20" in status else "💀" if "STOP" in status else "🏁"
+            
             text = (
-                f"{emoji} *PAPER SELL ALERT*\n\n"
-                f"Token: `{trade['symbol']}`\n"
-                f"Status: `{trade['status']}`\n"
-                f"PnL: `{profit:+.2f}%`\n"
-                f"CA: `{trade['token']}`"
+                f"{emoji} *TRADE CLOSED ({status})*\n\n"
+                f"💎 *Asset:* `{trade['symbol']}`\n"
+                f"📈 *Outcome:* `{profit:+.2f}%` PnL\n"
+                f"💵 *Sim Balance:* `${paper_trader.balance:.2f}`"
             )
         await tg_bot.send_alert(text)
 
@@ -109,13 +109,43 @@ async def main():
             metadata = await feature_extractor.get_token_metadata(token_address)
             name, symbol = metadata["name"], metadata["symbol"]
             
+            stats["scanned"] += 1
+            meta = safety_result.get("meta", "Generic")
+            stats["meta_counts"][meta] = stats["meta_counts"].get(meta, 0) + 1
+            
+            # Print per-token scan summary
+            fatal_count = safety_result.get("fatal_count", 0)
+            warning_count = safety_result.get("warning_count", 0)
+            
+            if fatal_count > 0:
+                safety_label = f"[bold red]❌ FATAL ({fatal_count})[/bold red]"
+            elif warning_count > 0:
+                safety_label = f"[bold yellow]⚠️ WARN ({warning_count})[/bold yellow]"
+            else:
+                safety_label = "[bold green]✅ CLEAN[/bold green]"
+
+            meta_label = f" [dim]| {meta}[/dim]" if meta != "Generic" else ""
+            
+            console.print(
+                f"[dim]🔍[/dim] [bold cyan]{symbol}[/bold cyan] [dim]({name[:15]})[/dim] | "
+                f"MC:[magenta]${mcap_usd:,.0f}[/magenta] | "
+                f"Liq:[yellow]{liq_bnb:.1f}BNB[/yellow] | "
+                f"{safety_label}{meta_label} | "
+                f"[dim]{token_address[:8]}...[/dim]"
+            )
+            
             # 5. Log Data
             data_logger.log_features(token_address, pair_address, features, is_safe)
             
             # 6. Make Decision
-            decision = decision_engine.make_decision(safety_result, features, ml_probability)
+            decision = decision_engine.make_decision(
+                safety_result, features, ml_probability, symbol=symbol,
+                ml_enabled=tg_bot.paper_trader.ml_filter_enabled
+            )
             
             if decision:
+                enter_type = "PERMISSIVE ENTER" if warning_count > 0 else "SAFE ENTER"
+                console.print(f"  [bold green]↳ {enter_type} →[/bold green] [bold cyan]{symbol}[/bold cyan]")
                 await paper_trader.add_trade(
                     token_address, pair_address, name, symbol, mcap_usd, liq_bnb,
                     ml_prob=ml_probability, meta=safety_result.get("meta", "Generic")
@@ -153,6 +183,10 @@ async def main():
             while True:
                 try:
                     # Update Dashboard
+                    if tg_bot.shutdown_requested:
+                        logger.warning("Remote shutdown initiated via Telegram.")
+                        break
+                        
                     table = await paper_trader.monitor_step()
                     live.update(table)
                     await asyncio.sleep(5)
