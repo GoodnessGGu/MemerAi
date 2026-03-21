@@ -126,9 +126,9 @@ class PaperTrader:
             profit_pct = (new_price - trade["buy_price"]) / trade["buy_price"] * 100
             elapsed_mins = (datetime.now() - trade["start_time"]).total_seconds() / 60
 
-            if new_price >= trade["buy_price"] * 2.0:
-                console.print(f"[bold gold1]🚀 [2X HIT!][/bold gold1] {trade['symbol']} (+{profit_pct:.1f}%)")
-                trade["status"] = "HIT_2X"
+            if new_price >= trade["buy_price"] * 1.20:  # +20% target
+                console.print(f"[bold gold1]🎯 [+20% HIT!][/bold gold1] {trade['symbol']} (+{profit_pct:.1f}%)")
+                trade["status"] = "HIT_20PCT"
                 to_remove.append(trade)
             elif new_price <= trade["buy_price"] * 0.70:
                 console.print(f"[bold red]💀 [STOP LOSS][/bold red] {trade['symbol']} ({profit_pct:.1f}%)")
@@ -214,7 +214,7 @@ class PaperTrader:
                     reader = csv.DictReader(f)
                     for row in reader:
                         total += 1
-                        if row["status"] == "HIT_2X":
+                        if row["status"] == "HIT_20PCT":
                             hits += 1
         except Exception:
             pass
@@ -226,7 +226,7 @@ class PaperTrader:
         win_rate = (hits / total * 100) if total > 0 else 0
         
         table.add_row("Total Trades", str(total))
-        table.add_row("2X Hits", f"[bold gold1]{hits}[/bold gold1]")
+        table.add_row("+20% Hits", f"[bold gold1]{hits}[/bold gold1]")
         table.add_row("Win Rate", f"{win_rate:.1f}%")
         table.add_row("Virtual Balance", f"[bold green]${self.balance:.2f}[/bold green]")
         return table
