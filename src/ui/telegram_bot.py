@@ -2,6 +2,7 @@ import logging
 import os
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
+from telegram.request import HTTPXRequest
 from src.execution.paper_trader import PaperTrader
 from src.config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_ID
 
@@ -14,8 +15,11 @@ class MemerTelegramBot:
         self.admin_id = os.getenv("TELEGRAM_ADMIN_ID", "").replace('"', '').replace("'", "").strip()
         self.app = None
 
-    async def start(self):
-        """Initialize and start the Telegram bot."""
+    async def start(self, max_retries: int = 5):
+        """Initialize and start the Telegram bot with retry logic."""
+        import asyncio
+        from telegram.error import NetworkError, TimedOut
+
         if not self.token:
             logger.warning("TELEGRAM_BOT_TOKEN not found. Telegram bot disabled.")
             return
@@ -28,10 +32,22 @@ class MemerTelegramBot:
         self.app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self._button_handler))
         self.app.add_handler(CallbackQueryHandler(self._callback_handler))
 
-        # Start non-blocking
-        await self.app.initialize()
-        await self.app.start()
-        await self.app.updater.start_polling()
+        # Start with retry logic
+        for attempt in range(1, max_retries + 1):
+            try:
+                await self.app.initialize()
+                await self.app.start()
+                await self.app.updater.start_polling()
+                break  # Success
+            except (NetworkError, TimedOut) as e:
+                if attempt < max_retries:
+                    wait = attempt * 5
+                    logger.warning(f"Telegram connection failed (attempt {attempt}/{max_retries}): {e}. Retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error(f"Telegram failed after {max_retries} attempts. Bot disabled.")
+                    self.app = None
+                    return
         
         # Notify Admin on Startup
         if self.admin_id:
@@ -45,6 +61,7 @@ class MemerTelegramBot:
                 logger.error(f"Failed to send startup message: {e}")
         
         logger.info("Telegram Bot is running and polling.")
+
 
     async def _callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle inline button clicks."""
