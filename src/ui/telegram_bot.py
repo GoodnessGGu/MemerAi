@@ -10,10 +10,8 @@ logger = logging.getLogger("TelegramBot")
 class MemerTelegramBot:
     def __init__(self, paper_trader: PaperTrader):
         self.paper_trader = paper_trader
-        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
-        self.admin_id = os.getenv("TELEGRAM_ADMIN_ID")
-        if self.admin_id:
-            self.admin_id = str(self.admin_id).replace('"', '').replace("'", "").strip()
+        self.token = os.getenv("TELEGRAM_BOT_TOKEN", "").replace('"', '').replace("'", "").strip()
+        self.admin_id = os.getenv("TELEGRAM_ADMIN_ID", "").replace('"', '').replace("'", "").strip()
         self.app = None
 
     async def start(self):
@@ -114,10 +112,27 @@ class MemerTelegramBot:
                 await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="Markdown")
 
         elif text == "📜 History":
-            # Just showing a summary for now
-            summary = self.paper_trader._generate_summary_table()
-            # Convert rich table to simple text is hard, let's just send a text summary
-            msg = f"📜 *Historical Performance*\n\nTotal Trades: {len(self.paper_trader.history)}\nWin Rate: (...check CSV for full logs...)"
+            if not self.paper_trader.history:
+                await update.message.reply_text("Your trade history is empty. Time to find some gems! 💎")
+                return
+
+            total_trades = len(self.paper_trader.history)
+            wins = len([t for t in self.paper_trader.history if t.get("status") == "HIT_2X"])
+            win_rate = (wins / total_trades) * 100
+            
+            # Calulate total PnL
+            total_pnl = 0
+            for t in self.paper_trader.history:
+                profit = (t["current_price"] - t["buy_price"]) / t["buy_price"] * 100
+                total_pnl += profit
+
+            msg = (
+                f"📜 *Historical Performance*\n\n"
+                f"Total Trades: `{total_trades}`\n"
+                f"Win Rate: `{win_rate:.1f}%` (2X Hits)\n"
+                f"Avg PnL: `{total_pnl/total_trades:+.2f}%`\n\n"
+                f"_Check 'paper_trades.csv' for full details._"
+            )
             await update.message.reply_text(msg, parse_mode="Markdown")
 
         elif text == "📈 Market Stats":

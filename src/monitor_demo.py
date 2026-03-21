@@ -41,6 +41,9 @@ async def main():
     w3 = get_async_w3(settings.RPC_URL)
     feature_extractor = FeatureExtractor(w3)
     
+    # Track stats for TG
+    stats = {"scanned": 0, "rejected": 0}
+    
     # Initialize TG Bot Wrapper
     tg_bot = MemerTelegramBot(None) # Will set paper_trader later
     
@@ -79,19 +82,19 @@ async def main():
     model = MomentumModel()
     data_logger = DataLogger("paper_trades.csv")
 
-    async def process_new_pair(pair_data: dict):
+    async def process_new_pair(pair_data: dict, client: httpx.AsyncClient):
         token_address = pair_data.get("token_address")
         pair_address = pair_data.get("pair_address")
+        stats["scanned"] += 1
         
         try:
-            # 1. Safety Check (Now includes LP Lock Check)
-            safety_result = await check_token_safety(token_address, pair_address)
+            # 1. Safety Check (Now uses shared client/w3)
+            safety_result = await check_token_safety(token_address, pair_address, client=client, w3=w3)
             is_safe = safety_result.get("is_safe", False)
             
             # 2. Extract Features
             features = await feature_extractor.extract_features(token_address, pair_address)
-            liq_bnb = features[0]
-            mcap_usd = features[1]
+            liq_bnb, mcap_usd = features[0], features[1]
             
             # 3. Predict Probability
             ml_probability = model.predict(features)
@@ -109,35 +112,51 @@ async def main():
             if decision:
                 await paper_trader.add_trade(
                     token_address, pair_address, name, symbol, mcap_usd, liq_bnb,
-                    ml_prob=ml_probability,
-                    meta=safety_result.get("meta", "Generic")
+                    ml_prob=ml_probability, meta=safety_result.get("meta", "Generic")
                 )
             else:
-                pass # Silent rejection to keep dashboard clean
+                stats["rejected"] += 1
                 
         except Exception as e:
             logger.error(f"Error processing {token_address[:8]}: {e}")
  
-    listener = BlockchainListener(w3=w3, callback=process_new_pair)
+    # Update TG Bot Market Stats
+    original_button_handler = tg_bot._button_handler
+    async def custom_button_handler(update, context):
+        if update.message.text == "📈 Market Stats":
+            msg = (
+                f"📈 *Market Analytics*\n\n"
+                f"Scanned: `{stats['scanned']}`\n"
+                f"Rejected: `{stats['rejected']}`\n"
+                f"Conversion: `{(len(paper_trader.active_trades)+len(paper_trader.history))/max(1, stats['scanned'])*100:.1f}%`"
+            )
+            await update.message.reply_text(msg, parse_mode="Markdown")
+        else:
+            await original_button_handler(update, context)
     
-    # Run with a Live Dashboard
-    with Live(console=console, screen=False, refresh_per_second=1) as live:
-        # Start background tasks
-        listener_task = asyncio.create_task(listener.start())
-        
-        while True:
-            try:
-                # Update Dashboard
-                table = await paper_trader.monitor_step()
-                live.update(table)
-                await asyncio.sleep(5)
-            except Exception as e:
-                logger.error(f"Monitor error: {e}")
-                await asyncio.sleep(10)
-            except KeyboardInterrupt:
-                break
+    tg_bot._button_handler = custom_button_handler
 
-    listener.stop()
+    async with httpx.AsyncClient() as client:
+        listener = BlockchainListener(w3=w3, callback=lambda p: process_new_pair(p, client))
+        
+        # Run with a Live Dashboard
+        with Live(console=console, screen=False, refresh_per_second=1) as live:
+            # Start background tasks
+            listener_task = asyncio.create_task(listener.start())
+            
+            while True:
+                try:
+                    # Update Dashboard
+                    table = await paper_trader.monitor_step()
+                    live.update(table)
+                    await asyncio.sleep(5)
+                except Exception as e:
+                    logger.error(f"Monitor error: {e}")
+                    await asyncio.sleep(10)
+                except KeyboardInterrupt:
+                    break
+
+        listener.stop()
 
 if __name__ == "__main__":
     try:

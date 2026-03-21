@@ -47,7 +47,7 @@ async def check_lp_lock(w3: AsyncWeb3, pair_address: str) -> dict:
         logger.error(f"Error checking LP lock: {e}")
         return {"is_locked": False, "percent": 0.0}
 
-async def check_token_safety(token_address: str, pair_address: str = None) -> dict:
+async def check_token_safety(token_address: str, pair_address: str = None, client: httpx.AsyncClient = None, w3: AsyncWeb3 = None) -> dict:
     """
     Query GoPlus API for token safety metrics and perform LP lock checks.
     """
@@ -55,66 +55,74 @@ async def check_token_safety(token_address: str, pair_address: str = None) -> di
     
     result = {
         "is_safe": False,
-        "risk_flags": []
+        "risk_flags": [],
+        "meta": "Generic"
     }
     
     try:
-        async with httpx.AsyncClient() as client:
+        # Use provided client or create temporary one (better to provide it)
+        if client is None:
+            async with httpx.AsyncClient() as temp_client:
+                response = await temp_client.get(url, timeout=10.0)
+        else:
             response = await client.get(url, timeout=10.0)
             
-            if response.status_code != 200:
-                result["risk_flags"].append("api_error")
-                return result
-                
-            data = response.json()
-            if data.get("code") != 1 or not data.get("result"):
-                result["risk_flags"].append("no_data")
-                return result
-                
-            token_info = data["result"].get(token_address.lower(), {})
-            if not token_info:
-                result["risk_flags"].append("not_found")
-                return result
-                
-            # PERFORM HEURISTICS CHECKS
-            
-            # 1. Critical Risks
-            if token_info.get("is_honeypot") == "1": result["risk_flags"].append("is_honeypot")
-            if token_info.get("is_mintable") == "1": result["risk_flags"].append("is_mintable")
-            if token_info.get("cannot_sell_all") == "1": result["risk_flags"].append("cannot_sell_all")
-            if token_info.get("is_blacklisted") == "1": result["risk_flags"].append("has_blacklist")
-                
-            # 2. Trading Taxes
-            try:
-                buy_tax = float(token_info.get("buy_tax", "0") or "0") * 100
-                sell_tax = float(token_info.get("sell_tax", "0") or "0") * 100
-                if buy_tax > MAX_BUY_TAX: result["risk_flags"].append(f"high_buy_tax_{buy_tax}%")
-                if sell_tax > MAX_SELL_TAX: result["risk_flags"].append(f"high_sell_tax_{sell_tax}%")
-            except Exception: result["risk_flags"].append("tax_parse_err")
-
-            # 3. Holder Concentration (Whale Detection)
-            holders = token_info.get("holders", [])
-            for h in holders[:3]: # Check top 3 holders
-                h_addr = h.get("address", "").lower()
-                h_pct = float(h.get("percent", "0")) * 100
-                # Ignore burn addresses and the pair itself if known (often pair is top holder)
-                if h_addr not in [addr.lower() for addr in BURN_ADDRESSES] and h_pct > 15:
-                    # Note: We can't easily know the pair address here without more logic, 
-                    # but usually, >15% on a non-burn address for a new token is a red flag.
-                    result["risk_flags"].append(f"whale_holder_{h_pct:.1f}%")
-
-            # 4. LP Lock Check (On-chain)
-            if pair_address:
-                w3 = get_async_w3(RPC_URL)
-                lp_res = await check_lp_lock(w3, pair_address)
-                if not lp_res["is_locked"]:
-                    result["risk_flags"].append(f"lp_unlocked_{lp_res['percent']:.1f}%")
-                
-            # Determine overall safety
-            if len(result["risk_flags"]) == 0:
-                result["is_safe"] = True
-                
+        if response.status_code != 200:
+            result["risk_flags"].append("api_error")
             return result
+            
+        data = response.json()
+        if data.get("code") != 1 or not data.get("result"):
+            result["risk_flags"].append("no_data")
+            return result
+            
+        token_info = data["result"].get(token_address.lower(), {})
+        if not token_info:
+            result["risk_flags"].append("not_found")
+            return result
+            
+        # NARRATIVE DETECTION
+        name = token_info.get("token_name", "").upper()
+        symbol = token_info.get("token_symbol", "").upper()
+        if any(x in name or x in symbol for x in ["ELON", "MUSK", "MARS", "XAI"]): result["meta"] = "Elon Meta 🚀"
+        elif any(x in name or x in symbol for x in ["GPT", "AI", "BOT", "NEURAL"]): result["meta"] = "AI Meta 🧠"
+        elif any(x in name or x in symbol for x in ["DOGE", "SHIB", "PEPE", "FLOKI"]): result["meta"] = "Meme Meta 🐸"
+        elif any(x in name or x in symbol for x in ["MOON", "SAFE", "GALAXY"]): result["meta"] = "Space Meta 🌌"
+
+        # PERFORM HEURISTICS CHECKS
+        # 1. Critical Risks
+        if token_info.get("is_honeypot") == "1": result["risk_flags"].append("is_honeypot")
+        if token_info.get("is_mintable") == "1": result["risk_flags"].append("is_mintable")
+        if token_info.get("cannot_sell_all") == "1": result["risk_flags"].append("cannot_sell_all")
+        if token_info.get("is_blacklisted") == "1": result["risk_flags"].append("has_blacklist")
+            
+        # 2. Trading Taxes
+        try:
+            buy_tax = float(token_info.get("buy_tax", "0") or "0") * 100
+            sell_tax = float(token_info.get("sell_tax", "0") or "0") * 100
+            if buy_tax > MAX_BUY_TAX * 1.5: result["risk_flags"].append(f"high_buy_{buy_tax:.0f}%")
+            if sell_tax > MAX_SELL_TAX * 1.5: result["risk_flags"].append(f"high_sell_{sell_tax:.0f}%")
+        except Exception: result["risk_flags"].append("tax_err")
+
+        # 3. Holder Concentration (Relaxed to 25% for paper trading)
+        holders = token_info.get("holders", [])
+        for h in holders[:3]:
+            h_addr = h.get("address", "").lower()
+            h_pct = float(h.get("percent", "0")) * 100
+            if h_addr not in [addr.lower() for addr in BURN_ADDRESSES] and h_pct > 25:
+                result["risk_flags"].append(f"whale_{h_pct:.0f}%")
+
+        # 4. LP Lock Check (Relaxed to 50% for paper trading)
+        if pair_address and w3:
+            lp_res = await check_lp_lock(w3, pair_address)
+            if lp_res["percent"] < 50:
+                result["risk_flags"].append(f"lp_unlocked_{lp_res['percent']:.0f}%")
+            
+        # Determine overall safety
+        if len(result["risk_flags"]) == 0:
+            result["is_safe"] = True
+            
+        return result
             
     except Exception as e:
         logger.error(f"Error checking token safety: {e}")
