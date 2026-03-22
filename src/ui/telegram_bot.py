@@ -94,10 +94,12 @@ class MemerTelegramBot:
     async def _start_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command and show buttons."""
         ml_label = "🤖 ML: ON" if self.paper_trader.ml_filter_enabled else "🤖 ML: OFF"
+        mode_label = f"💰 Mode: {self.paper_trader.trading_mode}"
         keyboard = [
             [KeyboardButton("💰 Balance"), KeyboardButton("📡 Active Trades")],
             [KeyboardButton("📜 History"), KeyboardButton("📈 Market Stats")],
-            [KeyboardButton(ml_label), KeyboardButton("🔄 Refresh")]
+            [KeyboardButton(ml_label), KeyboardButton(mode_label)],
+            [KeyboardButton("🔄 Refresh")]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
@@ -112,7 +114,7 @@ class MemerTelegramBot:
         
         if text == "💰 Balance":
             balance_text = (
-                f"💳 *Virtual Simulation Balance*\n\n"
+                f"💳 *Bot Dashboard - {self.paper_trader.trading_mode} MODE*\n\n"
                 f"├ Current: `${self.paper_trader.balance:.2f}`\n"
                 f"├ Initial: `$100.00`\n"
                 f"├ TP Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯\n"
@@ -217,6 +219,20 @@ class MemerTelegramBot:
             status = "ENABLED" if self.paper_trader.ml_filter_enabled else "DISABLED"
             thresh = f" ({self.paper_trader.ml_threshold*100:.0f}%)" if self.paper_trader.ml_filter_enabled else ""
             await update.message.reply_text(f"🤖 *ML Filter {status}!*{thresh}", parse_mode="Markdown")
+            
+            # Refresh keyboard
+            await self._start_handler(update, context)
+
+        elif "💰 Mode:" in text:
+            # Toggle Trading Mode
+            current = self.paper_trader.trading_mode
+            new_mode = "REAL" if current == "PAPER" else "PAPER"
+            
+            self.paper_trader.trading_mode = new_mode
+            self.paper_trader._save_sim_state()
+            
+            emoji = "⚠️" if new_mode == "REAL" else "🛡️"
+            await update.message.reply_text(f"{emoji} *Trading Mode set to {new_mode}!*", parse_mode="Markdown")
             
             # Refresh keyboard
             await self._start_handler(update, context)

@@ -18,6 +18,7 @@ from src.core.kol_tracker import KOLTracker
 from src.ml.model import MomentumModel
 from src.data.logger import DataLogger
 from src.execution.paper_trader import PaperTrader
+from src.execution.trader import RealTrader
 from src.utils.web3_utils import get_async_w3
 
 # Use Rich for specialized logging
@@ -80,6 +81,7 @@ async def main():
         await tg_bot.send_alert(text)
 
     paper_trader = PaperTrader(feature_extractor, on_event=handle_trade_event)
+    real_trader = RealTrader(w3)
     tg_bot.paper_trader = paper_trader # Link back
     
     # Start Telegram Bot
@@ -153,11 +155,22 @@ async def main():
             
             if decision:
                 enter_type = "PERMISSIVE ENTER" if warning_count > 0 else "SAFE ENTER"
-                console.print(f"  [bold green]↳ {enter_type} →[/bold green] [bold cyan]{symbol}[/bold cyan]")
-                await paper_trader.add_trade(
-                    token_address, pair_address, name, symbol, mcap_usd, liq_bnb,
-                    ml_prob=ml_probability, meta=safety_result.get("meta", "Generic")
-                )
+                current_mode = tg_bot.paper_trader.trading_mode
+                
+                console.print(f"  [bold green]↳ {enter_type} ({current_mode}) →[/bold green] [bold cyan]{symbol}[/bold cyan]")
+                
+                if current_mode == "REAL":
+                    # Execute on-chain
+                    tx_hash = await real_trader.buy_token(token_address, 0.001) # Small test amount (0.001 BNB)
+                    if tx_hash:
+                        # Log real trade (simplified for now)
+                        logger.warning(f"REAL TRADE EXECUTED: {symbol} | TX: {tx_hash}")
+                else:
+                    # Execute in simulation
+                    await paper_trader.add_trade(
+                        token_address, pair_address, name, symbol, mcap_usd, liq_bnb,
+                        ml_prob=ml_probability, meta=safety_result.get("meta", "Generic")
+                    )
             else:
                 stats["rejected"] += 1
                 
