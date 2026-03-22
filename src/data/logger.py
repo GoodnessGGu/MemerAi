@@ -13,6 +13,7 @@ class DataLogger:
             "timestamp", "token_address", "pair_address", 
             "liquidity_bnb", "market_cap", "buy_sell_ratio", 
             "volume_growth", "tx_count_growth", "holder_count",
+            "kol_count", "avg_kol_buy", "kol_buy_ratio",
             "is_safe", "label_2x"
         ]
         self._ensure_file()

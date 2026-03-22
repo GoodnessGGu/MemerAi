@@ -14,6 +14,7 @@ from src.core.listener import BlockchainListener
 from src.core.safety import check_token_safety
 from src.core.features import FeatureExtractor
 from src.core.decision import DecisionEngine
+from src.core.kol_tracker import KOLTracker
 from src.ml.model import MomentumModel
 from src.data.logger import DataLogger
 from src.execution.paper_trader import PaperTrader
@@ -85,6 +86,7 @@ async def main():
     await tg_bot.start()
 
     decision_engine = DecisionEngine()
+    kol_tracker = KOLTracker(w3)
     model = MomentumModel()
     data_logger = DataLogger("paper_trades.csv")
 
@@ -98,11 +100,15 @@ async def main():
             safety_result = await check_token_safety(token_address, pair_address, client=client, w3=w3)
             is_safe = safety_result.get("is_safe", False)
             
-            # 2. Extract Features
-            features = await feature_extractor.extract_features(token_address, pair_address)
+            # 2. KOL Tracking
+            kol_signal = await kol_tracker.detect_kol_signal(pair_address)
+            kol_count = kol_signal.get("kol_count", 0)
+
+            # 3. Extract Features
+            features = await feature_extractor.extract_features(token_address, pair_address, kol_signal=kol_signal)
             liq_bnb, mcap_usd = features[0], features[1]
             
-            # 3. Predict Probability
+            # 4. Predict Probability
             ml_probability = model.predict(features)
             
             # 4. Fetch Metadata
@@ -126,21 +132,23 @@ async def main():
 
             meta_label = f" [dim]| {meta}[/dim]" if meta != "Generic" else ""
             
+            kol_label = f" | [bold gold1]💎 KOLs: {kol_count}[/bold gold1]" if kol_count > 0 else ""
             console.print(
                 f"[dim]🔍[/dim] [bold cyan]{symbol}[/bold cyan] [dim]({name[:15]})[/dim] | "
                 f"MC:[magenta]${mcap_usd:,.0f}[/magenta] | "
                 f"Liq:[yellow]{liq_bnb:.1f}BNB[/yellow] | "
-                f"{safety_label}{meta_label} | "
+                f"{safety_label}{meta_label}{kol_label} | "
                 f"[dim]{token_address[:8]}...[/dim]"
             )
             
             # 5. Log Data
             data_logger.log_features(token_address, pair_address, features, is_safe)
             
-            # 6. Make Decision
+            # 7. Make Decision
             decision = decision_engine.make_decision(
                 safety_result, features, ml_probability, symbol=symbol,
-                ml_enabled=tg_bot.paper_trader.ml_filter_enabled
+                ml_enabled=tg_bot.paper_trader.ml_filter_enabled,
+                kol_signal=kol_signal
             )
             
             if decision:

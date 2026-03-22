@@ -4,18 +4,28 @@ from src.config.settings import MIN_LIQUIDITY_BNB, PERMISSIVE_MODE
 logger = logging.getLogger(__name__)
 
 class DecisionEngine:
-    def make_decision(self, safety_result: dict, features: list, ml_probability: float, symbol: str = "", ml_enabled: bool = True) -> bool:
+    def make_decision(self, safety_result: dict, features: list, ml_probability: float, symbol: str = "", ml_enabled: bool = True, kol_signal: dict = None) -> bool:
         """
-        Decision logic based on safety categories, ML filtering, and symbol noise.
+        Decision logic based on safety, ML filtering, and KOL signals.
         """
+        kol_signal = kol_signal or {"kol_count": 0, "is_kol_signal": False}
+        kol_count = kol_signal.get("kol_count", 0)
+
         # 0. Symbol Noise Filter
         if symbol.upper() == "USDT" or "USDT" in symbol.upper():
             logger.info(f"Rejected: Symbol '{symbol}' is in blacklist (USDT)")
             return False
 
-        # 1. ML Filter (Conditional)
-        if ml_enabled and ml_probability < 0.80:
-            logger.info(f"Rejected: ML Probability ({ml_probability*100:.1f}%) < 80%")
+        # 1. KOL Boost Logic
+        # Apply a +10% boost to ML probability if 2+ KOLs are found
+        boosted_prob = ml_probability
+        if kol_count >= 2:
+            boosted_prob = min(1.0, ml_probability + 0.10)
+            logger.info(f"KOL Boost Applied: {ml_probability*100:.1f}% -> {boosted_prob*100:.1f}%")
+
+        # 2. ML Filter (Conditional)
+        if ml_enabled and boosted_prob < 0.80:
+            logger.info(f"Rejected: Boosted ML Probability ({boosted_prob*100:.1f}%) < 80%")
             return False
 
         is_safe = safety_result.get("is_safe", False)
@@ -38,5 +48,5 @@ class DecisionEngine:
                 logger.info(f"Rejected: Risk flags found: {safety_result.get('risk_flags')}")
                 return False
             
-        logger.info(f"✅ SIGNAL: Liq={liquidity:.2f} BNB | Safety OK | ML={ml_probability*100:.1f}%")
+        logger.info(f"✅ SIGNAL: Liq={liquidity:.2f} BNB | Safety OK | ML={boosted_prob*100:.1f}% | KOLs={kol_count}")
         return True

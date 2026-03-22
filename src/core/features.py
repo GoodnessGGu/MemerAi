@@ -55,12 +55,13 @@ class FeatureExtractor:
             # Fallback if contract doesn't implement name/symbol correctly
             return {"name": "Unknown", "symbol": "UNK"}
 
-    async def extract_features(self, token_address: str, pair_address: str) -> List[float]:
+    async def extract_features(self, token_address: str, pair_address: str, kol_signal: dict = None) -> List[float]:
         """
-        Extracts trading features for the ML model.
+        Extracts trading features for the ML model with optional KOL signal integration.
         Returns a feature vector (list of floats).
         """
         logger.info(f"Extracting features for Token: {token_address} | Pair: {pair_address}")
+        kol_signal = kol_signal or {"kol_count": 0, "total_buyers": 0}
         
         try:
             pair_contract = self.w3.eth.contract(
@@ -83,9 +84,12 @@ class FeatureExtractor:
             # Convert to standard format (BNB has 18 decimals)
             liquidity_bnb = wbnb_reserve / (10**18)
             
-            # Note: For MVP, fully calculating volume growth, buy/sell ratio, and holder count
-            # in real time requires querying recent swap events and token transfer events.
-            # We insert placeholders for complex metrics that would be continually updated.
+            # KOL specific features
+            kol_count = float(kol_signal.get("kol_count", 0))
+            total_buyers = float(kol_signal.get("total_buyers", 1)) # Prevent div by zero
+            kol_buy_ratio = kol_count / max(1.0, total_buyers)
+            avg_kol_buy = 0.0 # Placeholder for future deep analysis
+            
             market_cap = liquidity_bnb * 2  # Naive approximation
             buy_sell_ratio = 1.0            # Placeholder
             volume_growth = 0.0             # Placeholder
@@ -98,7 +102,10 @@ class FeatureExtractor:
                 float(buy_sell_ratio),
                 float(volume_growth),
                 float(tx_count_growth),
-                float(holder_count)
+                float(holder_count),
+                kol_count,
+                avg_kol_buy,
+                kol_buy_ratio
             ]
             
             return feature_vector
