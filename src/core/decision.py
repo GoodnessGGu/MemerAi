@@ -4,6 +4,9 @@ from src.config.settings import MIN_LIQUIDITY_BNB, PERMISSIVE_MODE
 logger = logging.getLogger(__name__)
 
 class DecisionEngine:
+    def __init__(self):
+        self.ml_threshold = 0.60 # Default 60%
+
     def make_decision(self, safety_result: dict, features: list, ml_probability: float, symbol: str = "", ml_enabled: bool = True, kol_signal: dict = None) -> bool:
         """
         Decision logic based on safety, ML filtering, and KOL signals.
@@ -24,8 +27,8 @@ class DecisionEngine:
             logger.info(f"KOL Boost Applied: {ml_probability*100:.1f}% -> {boosted_prob*100:.1f}%")
 
         # 2. ML Filter (Conditional)
-        if ml_enabled and boosted_prob < 0.80:
-            logger.info(f"Rejected: Boosted ML Probability ({boosted_prob*100:.1f}%) < 80%")
+        if ml_enabled and boosted_prob < self.ml_threshold:
+            logger.info(f"Rejected: Boosted ML Probability ({boosted_prob*100:.1f}%) < {self.ml_threshold*100:.0f}%")
             return False
 
         is_safe = safety_result.get("is_safe", False)

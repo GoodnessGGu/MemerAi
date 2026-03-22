@@ -190,6 +190,9 @@ async def main():
             
             while True:
                 try:
+                    # Sync dynamic settings to engine
+                    decision_engine.ml_threshold = paper_trader.ml_threshold
+                    
                     # Update Dashboard
                     if tg_bot.shutdown_requested:
                         logger.warning("Remote shutdown initiated via Telegram.")

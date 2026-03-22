@@ -33,6 +33,7 @@ class MemerTelegramBot:
         # Add handlers
         self.app.add_handler(CommandHandler("start", self._start_handler))
         self.app.add_handler(CommandHandler("set_tp", self._set_tp_handler))
+        self.app.add_handler(CommandHandler("set_ml", self._set_ml_handler))
         self.app.add_handler(CommandHandler("shutdown", self._shutdown_handler))
         self.app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self._button_handler))
         self.app.add_handler(CallbackQueryHandler(self._callback_handler))
@@ -114,7 +115,8 @@ class MemerTelegramBot:
                 f"💳 *Virtual Simulation Balance*\n\n"
                 f"├ Current: `${self.paper_trader.balance:.2f}`\n"
                 f"├ Initial: `$100.00`\n"
-                f"└ Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯"
+                f"├ TP Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯\n"
+                f"└ ML Threshold: `{self.paper_trader.ml_threshold * 100:.0f}%` 🤖"
             )
             await update.message.reply_text(balance_text, parse_mode="Markdown")
             
@@ -213,7 +215,8 @@ class MemerTelegramBot:
             self.paper_trader._save_sim_state()
             
             status = "ENABLED" if self.paper_trader.ml_filter_enabled else "DISABLED"
-            await update.message.reply_text(f"🤖 *ML Filter {status}!*", parse_mode="Markdown")
+            thresh = f" ({self.paper_trader.ml_threshold*100:.0f}%)" if self.paper_trader.ml_filter_enabled else ""
+            await update.message.reply_text(f"🤖 *ML Filter {status}!*{thresh}", parse_mode="Markdown")
             
             # Refresh keyboard
             await self._start_handler(update, context)
@@ -252,3 +255,24 @@ class MemerTelegramBot:
         await update.message.reply_text("🛑 *Shutdown command received.* Stopping Memer AI... Goodbye! 👋", parse_mode="Markdown")
         logger.warning(f"Shutdown requested by user {update.effective_user.id}")
         self.shutdown_requested = True
+
+    async def _set_ml_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /set_ml <percent> command."""
+        try:
+            if not context.args:
+                await update.message.reply_text("❌ Usage: `/set_ml <percent>`\nExample: `/set_ml 65` for 65% confidence.", parse_mode="Markdown")
+                return
+            
+            percent = float(context.args[0])
+            if not (0 < percent <= 100):
+                await update.message.reply_text("❌ Percentage must be between 1 and 100.")
+                return
+            
+            self.paper_trader.ml_threshold = percent / 100
+            self.paper_trader._save_sim_state()
+            
+            await update.message.reply_text(f"✅ *Success!* ML Confidence Threshold set to *{percent:.0f}%*.\n_Trades below this probability will be filtered._", parse_mode="Markdown")
+            logger.info(f"User updated ML Threshold to {percent}%")
+            
+        except ValueError:
+            await update.message.reply_text("❌ Invalid number. Please use a number like 50, 60, or 75.")
