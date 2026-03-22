@@ -5,7 +5,7 @@ from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboard
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
 from telegram.request import HTTPXRequest
 from src.execution.paper_trader import PaperTrader
-from src.config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_ID
+from src.config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_ID, WALLET_ADDRESS
 
 logger = logging.getLogger("TelegramBot")
 
@@ -113,13 +113,35 @@ class MemerTelegramBot:
         text = update.message.text
         
         if text == "💰 Balance":
-            balance_text = (
-                f"💳 *Bot Dashboard - {self.paper_trader.trading_mode} MODE*\n\n"
-                f"├ Current: `${self.paper_trader.balance:.2f}`\n"
-                f"├ Initial: `$100.00`\n"
-                f"├ TP Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯\n"
-                f"└ ML Threshold: `{self.paper_trader.ml_threshold * 100:.0f}%` 🤖"
-            )
+            mode = self.paper_trader.trading_mode
+            
+            if mode == "REAL":
+                try:
+                    # Fetch Real BNB Balance
+                    w3 = self.paper_trader.feature_extractor.w3
+                    balance_wei = await w3.eth.get_balance(WALLET_ADDRESS)
+                    bnb_balance = balance_wei / 1e18
+                    
+                    balance_text = (
+                        f"🏦 *On-Chain Wallet Balance*\n\n"
+                        f"├ Address: `{WALLET_ADDRESS[:6]}...{WALLET_ADDRESS[-4:]}`\n"
+                        f"├ Balance: `{bnb_balance:.4f} BNB` 💰\n"
+                        f"├ Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯\n"
+                        f"└ Status: `LIVE EXECUTION` ⚠️"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to fetch real balance: {e}")
+                    balance_text = "❌ *Error:* Could not fetch real wallet balance. Check your RPC or Address."
+            else:
+                # Simulation Balance
+                balance_text = (
+                    f"💳 *Bot Dashboard - PAPER MODE*\n\n"
+                    f"├ Current: `${self.paper_trader.balance:.2f}`\n"
+                    f"├ Initial: `$100.00`\n"
+                    f"├ TP Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯\n"
+                    f"└ ML Threshold: `{self.paper_trader.ml_threshold * 100:.0f}%` 🤖"
+                )
+            
             await update.message.reply_text(balance_text, parse_mode="Markdown")
             
         elif text == "📡 Active Trades":
