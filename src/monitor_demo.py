@@ -161,7 +161,8 @@ async def main():
                 
                 if current_mode == "REAL":
                     # Execute on-chain
-                    tx_hash = await real_trader.buy_token(token_address, 0.001) # Small test amount (0.001 BNB)
+                    trade_amt = paper_trader.trade_amount_bnb
+                    tx_hash = await real_trader.buy_token(token_address, trade_amt)
                     if tx_hash:
                         # Log real trade (simplified for now)
                         logger.warning(f"REAL TRADE EXECUTED: {symbol} | TX: {tx_hash}")

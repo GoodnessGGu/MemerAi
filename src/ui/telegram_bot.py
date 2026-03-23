@@ -34,6 +34,8 @@ class MemerTelegramBot:
         self.app.add_handler(CommandHandler("start", self._start_handler))
         self.app.add_handler(CommandHandler("set_tp", self._set_tp_handler))
         self.app.add_handler(CommandHandler("set_ml", self._set_ml_handler))
+        self.app.add_handler(CommandHandler("set_amount", self._set_amount_handler))
+        self.app.add_handler(CommandHandler("help", self._help_handler))
         self.app.add_handler(CommandHandler("shutdown", self._shutdown_handler))
         self.app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self._button_handler))
         self.app.add_handler(CallbackQueryHandler(self._callback_handler))
@@ -99,7 +101,7 @@ class MemerTelegramBot:
             [KeyboardButton("💰 Balance"), KeyboardButton("📡 Active Trades")],
             [KeyboardButton("📜 History"), KeyboardButton("📈 Market Stats")],
             [KeyboardButton(ml_label), KeyboardButton(mode_label)],
-            [KeyboardButton("🔄 Refresh")]
+            [KeyboardButton("🔄 Refresh"), KeyboardButton("❓ Help")]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
@@ -126,6 +128,7 @@ class MemerTelegramBot:
                         f"🏦 *On-Chain Wallet Balance*\n\n"
                         f"├ Address: `{WALLET_ADDRESS[:6]}...{WALLET_ADDRESS[-4:]}`\n"
                         f"├ Balance: `{bnb_balance:.4f} BNB` 💰\n"
+                        f"├ Entry Size: `{self.paper_trader.trade_amount_bnb} BNB` 🚀\n"
                         f"├ Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯\n"
                         f"└ Status: `LIVE EXECUTION` ⚠️"
                     )
@@ -262,6 +265,9 @@ class MemerTelegramBot:
         elif text == "🔄 Refresh":
             await update.message.reply_text("🔄 Dashboard refreshed!")
             await self._start_handler(update, context)
+            
+        elif text == "❓ Help":
+            await self._help_handler(update, context)
 
     async def _set_tp_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /set_tp <percent> command."""
@@ -314,3 +320,41 @@ class MemerTelegramBot:
             
         except ValueError:
             await update.message.reply_text("❌ Invalid number. Please use a number like 50, 60, or 75.")
+
+    async def _set_amount_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /set_amount <bnb> command."""
+        try:
+            if not context.args:
+                await update.message.reply_text("❌ Usage: `/set_amount <bnb_value>`\nExample: `/set_amount 0.1` for 0.1 BNB entries.", parse_mode="Markdown")
+                return
+            
+            val = float(context.args[0])
+            if val <= 0:
+                await update.message.reply_text("❌ Amount must be greater than 0.")
+                return
+            
+            self.paper_trader.trade_amount_bnb = val
+            self.paper_trader._save_sim_state()
+            
+            await update.message.reply_text(f"✅ *Success!* Real Trade Amount set to *{val} BNB*.", parse_mode="Markdown")
+            logger.info(f"User updated Trade Amount to {val} BNB")
+            
+        except ValueError:
+            await update.message.reply_text("❌ Invalid number. Please use a number like 0.1 or 0.05.")
+
+    async def _help_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show all available commands."""
+        help_text = (
+            "📖 *Memer AI - Command List*\n\n"
+            "*Configuration*\n"
+            "├ `/set_amount <bnb>` - Set entry size (Real Mode)\n"
+            "├ `/set_tp <percent>` - Set take-profit (e.g. 50)\n"
+            "└ `/set_ml <percent>` - Set ML threshold (e.g. 70)\n\n"
+            "*Monitoring*\n"
+            "├ `/history` - View past performance\n"
+            "└ `/start` - Refresh main dashboard\n\n"
+            "*System*\n"
+            "└ `/shutdown` - Remote stop the bot 🛑\n\n"
+            "_Use the buttons below for quick navigation!_"
+        )
+        await update.message.reply_text(help_text, parse_mode="Markdown")

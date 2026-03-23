@@ -29,6 +29,7 @@ class PaperTrader:
         self.ml_filter_enabled = True # Default ON
         self.ml_threshold = 0.60 # Default 60%
         self.trading_mode = "PAPER" # Default Simulation
+        self.trade_amount_bnb = 0.001 # Default 0.001 BNB
         self._initialize_log()
         self._load_sim_state()
 
@@ -54,7 +55,8 @@ class PaperTrader:
                     self.ml_filter_enabled = data.get("ml_filter_enabled", True)
                     self.ml_threshold = data.get("ml_threshold", 0.60)
                     self.trading_mode = data.get("trading_mode", "PAPER")
-                    logger.info(f"Loaded Sim State: Balance=${self.balance:.2f}, ML={self.ml_filter_enabled}, Mode={self.trading_mode}")
+                    self.trade_amount_bnb = data.get("trade_amount_bnb", 0.001)
+                    logger.info(f"Loaded Sim State: Balance=${self.balance:.2f}, Mode={self.trading_mode}, Amount={self.trade_amount_bnb} BNB")
             except Exception as e:
                 logger.error(f"Failed to load sim state: {e}")
 
@@ -68,6 +70,7 @@ class PaperTrader:
                     "ml_filter_enabled": self.ml_filter_enabled,
                     "ml_threshold": self.ml_threshold,
                     "trading_mode": self.trading_mode,
+                    "trade_amount_bnb": self.trade_amount_bnb,
                     "last_updated": datetime.now().isoformat()
                 }, f)
         except Exception as e:
