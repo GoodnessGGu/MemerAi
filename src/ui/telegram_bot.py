@@ -101,7 +101,8 @@ class MemerTelegramBot:
             [KeyboardButton("💰 Balance"), KeyboardButton("📡 Active Trades")],
             [KeyboardButton("📜 History"), KeyboardButton("📈 Market Stats")],
             [KeyboardButton(ml_label), KeyboardButton(mode_label)],
-            [KeyboardButton("🔄 Refresh"), KeyboardButton("❓ Help")]
+            [KeyboardButton(f"💵 Currency: {self.paper_trader.amount_currency}"), KeyboardButton("🔄 Refresh")],
+            [KeyboardButton("❓ Help")]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
@@ -119,16 +120,22 @@ class MemerTelegramBot:
             
             if mode == "REAL":
                 try:
-                    # Fetch Real BNB Balance
+                    # Fetch Real BNB Balance for display
                     w3 = self.paper_trader.feature_extractor.w3
                     balance_wei = await w3.eth.get_balance(WALLET_ADDRESS)
                     bnb_balance = balance_wei / 1e18
                     
+                    # Entry Size display depends on currency
+                    if self.paper_trader.amount_currency == "USD":
+                        entry_disp = f"${self.paper_trader.trade_amount_usd:.2f} (USD)"
+                    else:
+                        entry_disp = f"{self.paper_trader.trade_amount_bnb} BNB"
+
                     balance_text = (
                         f"🏦 *On-Chain Wallet Balance*\n\n"
                         f"├ Address: `{WALLET_ADDRESS[:6]}...{WALLET_ADDRESS[-4:]}`\n"
                         f"├ Balance: `{bnb_balance:.4f} BNB` 💰\n"
-                        f"├ Entry Size: `{self.paper_trader.trade_amount_bnb} BNB` 🚀\n"
+                        f"├ Entry Size: `{entry_disp}` 🚀\n"
                         f"├ Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯\n"
                         f"└ Status: `LIVE EXECUTION` ⚠️"
                     )
@@ -266,6 +273,16 @@ class MemerTelegramBot:
             await update.message.reply_text("🔄 Dashboard refreshed!")
             await self._start_handler(update, context)
             
+        elif "💵 Currency:" in text:
+            # Toggle Currency Mode
+            current = self.paper_trader.amount_currency
+            new_mode = "USD" if current == "BNB" else "BNB"
+            self.paper_trader.amount_currency = new_mode
+            self.paper_trader._save_sim_state()
+            
+            await update.message.reply_text(f"💵 *Trade Amount currency set to {new_mode}!*")
+            await self._start_handler(update, context)
+
         elif text == "❓ Help":
             await self._help_handler(update, context)
 
@@ -322,10 +339,12 @@ class MemerTelegramBot:
             await update.message.reply_text("❌ Invalid number. Please use a number like 50, 60, or 75.")
 
     async def _set_amount_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /set_amount <bnb> command."""
+        """Handle /set_amount <val> command."""
         try:
+            curr = self.paper_trader.amount_currency
             if not context.args:
-                await update.message.reply_text("❌ Usage: `/set_amount <bnb_value>`\nExample: `/set_amount 0.1` for 0.1 BNB entries.", parse_mode="Markdown")
+                example = "50" if curr == "USD" else "0.1"
+                await update.message.reply_text(f"❌ Usage: `/set_amount <value>`\nExample: `/set_amount {example}` for {curr} entries.", parse_mode="Markdown")
                 return
             
             val = float(context.args[0])
@@ -333,14 +352,21 @@ class MemerTelegramBot:
                 await update.message.reply_text("❌ Amount must be greater than 0.")
                 return
             
-            self.paper_trader.trade_amount_bnb = val
-            self.paper_trader._save_sim_state()
+            if curr == "USD":
+                self.paper_trader.trade_amount_usd = val
+                # Show estimation
+                price = await self.paper_trader.feature_extractor.get_bnb_price()
+                est_bnb = val / price
+                await update.message.reply_text(f"✅ *Success!* Real Trade Amount set to *${val} USD*.\n_Estimated entry: {est_bnb:.4f} BNB (at ${price:,.0f}/BNB)_", parse_mode="Markdown")
+            else:
+                self.paper_trader.trade_amount_bnb = val
+                await update.message.reply_text(f"✅ *Success!* Real Trade Amount set to *{val} BNB*.", parse_mode="Markdown")
             
-            await update.message.reply_text(f"✅ *Success!* Real Trade Amount set to *{val} BNB*.", parse_mode="Markdown")
-            logger.info(f"User updated Trade Amount to {val} BNB")
+            self.paper_trader._save_sim_state()
+            logger.info(f"User updated Trade Amount to {val} {curr}")
             
         except ValueError:
-            await update.message.reply_text("❌ Invalid number. Please use a number like 0.1 or 0.05.")
+            await update.message.reply_text("❌ Invalid number. Please use a number like 0.1 or 50.")
 
     async def _help_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show all available commands."""

@@ -160,8 +160,15 @@ async def main():
                 console.print(f"  [bold green]↳ {enter_type} ({current_mode}) →[/bold green] [bold cyan]{symbol}[/bold cyan]")
                 
                 if current_mode == "REAL":
+                    # Determine Trade Amount
+                    if paper_trader.amount_currency == "USD":
+                        bnb_price = await feature_extractor.get_bnb_price()
+                        trade_amt = paper_trader.trade_amount_usd / bnb_price
+                        logger.info(f"USD Mode: ${paper_trader.trade_amount_usd} -> {trade_amt:.4f} BNB (at ${bnb_price:,.0f})")
+                    else:
+                        trade_amt = paper_trader.trade_amount_bnb
+
                     # Execute on-chain
-                    trade_amt = paper_trader.trade_amount_bnb
                     tx_hash = await real_trader.buy_token(token_address, trade_amt)
                     if tx_hash:
                         # Log real trade (simplified for now)

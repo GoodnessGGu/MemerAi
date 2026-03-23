@@ -138,3 +138,21 @@ class FeatureExtractor:
         except Exception as e:
             logger.error(f"Error getting price for {pair_address}: {e}")
             return 0.0
+
+    async def get_bnb_price(self) -> float:
+        """Fetch current BNB price in USDT from PancakeSwap V2."""
+        try:
+            # WBNB/USDT Pair on BSC V2
+            usdt_pair = "0x16b9a82891338f9bA80E2D6970FddA79D1eb0daE"
+            # ABI for getReserves
+            pair_abi = [{"constant":True,"inputs":[],"name":"getReserves","outputs":[{"internalType":"uint112","name":"_reserve0","type":"uint112"},{"internalType":"uint112","name":"_reserve1","type":"uint112"},{"internalType":"uint32","name":"_blockTimestampLast","type":"uint32"}],"payable":false,"type":"function"}]
+            
+            contract = self.w3.eth.contract(address=self.w3.to_checksum_address(usdt_pair), abi=pair_abi)
+            reserves = await contract.functions.getReserves().call()
+            
+            # WBNB is reserve0, USDT is reserve1 usually on this pair
+            price = (reserves[1] / 10**18) / (reserves[0] / 10**18)
+            return float(price)
+        except Exception as e:
+            logger.error(f"Failed to fetch BNB price: {e}")
+            return 600.0 # Fallback
