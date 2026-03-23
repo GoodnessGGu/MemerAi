@@ -102,7 +102,7 @@ class MemerTelegramBot:
             [KeyboardButton("📜 History"), KeyboardButton("📈 Market Stats")],
             [KeyboardButton(ml_label), KeyboardButton(mode_label)],
             [KeyboardButton(f"💵 Currency: {self.paper_trader.amount_currency}"), KeyboardButton("🔄 Refresh")],
-            [KeyboardButton("❓ Help")]
+            [KeyboardButton("❓ Help"), KeyboardButton("🎲 Realism: " + ("ON" if self.paper_trader.realism_mode else "OFF"))]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         await update.message.reply_text(
@@ -130,6 +130,8 @@ class MemerTelegramBot:
                         entry_disp = f"${self.paper_trader.trade_amount_usd:.2f} (USD)"
                     else:
                         entry_disp = f"{self.paper_trader.trade_amount_bnb} BNB"
+                    
+                    realism_status = "STRESS TEST 🎲" if self.paper_trader.realism_mode else "LIVE EXECUTION ⚠️"
 
                     balance_text = (
                         f"🏦 *On-Chain Wallet Balance*\n\n"
@@ -137,7 +139,7 @@ class MemerTelegramBot:
                         f"├ Balance: `{bnb_balance:.4f} BNB` 💰\n"
                         f"├ Entry Size: `{entry_disp}` 🚀\n"
                         f"├ Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯\n"
-                        f"└ Status: `LIVE EXECUTION` ⚠️"
+                        f"└ Status: `{realism_status}`"
                     )
                 except Exception as e:
                     logger.error(f"Failed to fetch real balance: {e}")
@@ -281,6 +283,15 @@ class MemerTelegramBot:
             self.paper_trader._save_sim_state()
             
             await update.message.reply_text(f"💵 *Trade Amount currency set to {new_mode}!*")
+            await self._start_handler(update, context)
+
+        elif "🎲 Realism:" in text:
+            # Toggle Realism Mode
+            self.paper_trader.realism_mode = not self.paper_trader.realism_mode
+            self.paper_trader._save_sim_state()
+            
+            status = "ON (10% Slippage + $0.50 Gas)" if self.paper_trader.realism_mode else "OFF (Ideal Parameters)"
+            await update.message.reply_text(f"🎲 *Realism Mode {status}!*", parse_mode="Markdown")
             await self._start_handler(update, context)
 
         elif text == "❓ Help":

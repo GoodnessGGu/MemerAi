@@ -32,6 +32,9 @@ class PaperTrader:
         self.trade_amount_bnb = 0.001 # Default 0.001 BNB
         self.trade_amount_usd = 10.0 # Default $10
         self.amount_currency = "BNB" # Default BNB mode
+        self.realism_mode = False   # Default OFF
+        self.slippage_pct = 0.10    # 10% Slippage/Tax penalty
+        self.gas_fee_usd = 0.50     # $0.50 Gas fee
         self._initialize_log()
         self._load_sim_state()
 
@@ -60,7 +63,8 @@ class PaperTrader:
                     self.trade_amount_bnb = data.get("trade_amount_bnb", 0.001)
                     self.trade_amount_usd = data.get("trade_amount_usd", 10.0)
                     self.amount_currency = data.get("amount_currency", "BNB")
-                    logger.info(f"Loaded Sim State: Mode={self.trading_mode}, Amt={self.trade_amount_bnb} BNB / ${self.trade_amount_usd} ({self.amount_currency})")
+                    self.realism_mode = data.get("realism_mode", False)
+                    logger.info(f"Loaded Sim State: Mode={self.trading_mode}, Realism={self.realism_mode}")
             except Exception as e:
                 logger.error(f"Failed to load sim state: {e}")
 
@@ -77,6 +81,7 @@ class PaperTrader:
                     "trade_amount_bnb": self.trade_amount_bnb,
                     "trade_amount_usd": self.trade_amount_usd,
                     "amount_currency": self.amount_currency,
+                    "realism_mode": self.realism_mode,
                     "last_updated": datetime.now().isoformat()
                 }, f)
         except Exception as e:
@@ -88,27 +93,37 @@ class PaperTrader:
         if buy_price == 0:
             return
 
+        # Apply Realism Penalties
+        actual_buy_price = buy_price
+        if self.realism_mode:
+            # Entry Slippage (Simulate buying into high demand)
+            actual_buy_price = buy_price * (1 + self.slippage_pct)
+            # Gas Fee for Buy
+            self.balance -= self.gas_fee_usd
+            logger.info(f"Realism Mode: Applied {self.slippage_pct*100}% slippage and ${self.gas_fee_usd} gas fee.")
+
         trade = {
             "token": token_address,
             "name": name,
             "symbol": symbol,
             "pair": pair_address,
-            "buy_price": buy_price,
-            "current_price": buy_price,
+            "buy_price": actual_buy_price,
+            "current_price": actual_buy_price,
             "buy_usd": TRADE_AMOUNT,
             "mcap": mcap,
             "liquidity": liquidity,
             "ml_prob": ml_prob,
             "meta": meta,
             "start_time": datetime.now(),
-            "max_price": buy_price,
+            "max_price": actual_buy_price,
             "status": "OPEN"
         }
         self.active_trades.append(trade)
         self.balance -= TRADE_AMOUNT
         self._save_sim_state()
         
-        console.print(f"[bold green]▶ [PAPER BUY][/bold green] [bold cyan]{symbol}[/bold cyan] | Entry: ${TRADE_AMOUNT:.2f} | Cap: ${mcap:,.0f} | Liq: {liquidity:.2f} BNB")
+        realism_label = " (Realism ON 🎲)" if self.realism_mode else ""
+        console.print(f"[bold green]▶ [PAPER BUY]{realism_label}[/bold green] [bold cyan]{symbol}[/bold cyan] | Entry: ${TRADE_AMOUNT:.2f} | Cap: ${mcap:,.0f} | Liq: {liquidity:.2f} BNB")
         
         if self.on_event:
             asyncio.create_task(self.on_event("BUY", trade))
@@ -184,6 +199,12 @@ class PaperTrader:
         
         # Update simulation balance
         self.balance += profit_usd
+        
+        # Realism Fee for Sell
+        if self.realism_mode:
+            self.balance -= self.gas_fee_usd
+            logger.info(f"Realism Mode: Applied ${self.gas_fee_usd} gas fee for sell.")
+
         self._save_sim_state()
 
         try:
