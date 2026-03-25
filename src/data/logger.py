@@ -47,6 +47,6 @@ class DataLogger:
                 writer = csv.writer(f)
                 writer.writerow(row)
                 
-            logger.info(f"Logged features for {token_address} safely.")
+            logger.debug(f"Logged features for {token_address} safely.")
         except Exception as e:
             logger.error(f"Failed to log data for {token_address}: {e}")
