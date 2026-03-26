@@ -31,6 +31,7 @@ SLIPPAGE_TOLERANCE_PERCENT = 5.0
 TAKE_PROFIT_PERCENT = float(os.getenv("TAKE_PROFIT_PERCENT", "30.0")) # Target 20%-40% range
 TAKE_PROFIT_MULTIPLIER = 1.0 + (TAKE_PROFIT_PERCENT / 100.0)
 STOP_LOSS_PERCENT = 30.0      # -30% stop loss
+TRAILING_STOP_LOSS_PERCENT = 15.0 # Trailing 15% from peak
 
 # Simulation / Action Settings
 PERMISSIVE_MODE = True        # If True, allows tokens with "Warning" risks (Unlocked LP, Whales)
@@ -38,6 +39,7 @@ PERMISSIVE_MODE = True        # If True, allows tokens with "Warning" risks (Unl
 # GMGN AI Integration Settings
 USE_GMGN_SOURCE = os.getenv("USE_GMGN_SOURCE", "True").lower() == "true"
 GMGN_API_KEY = os.getenv("GMGN_API_KEY", "")
-# Polling interval in seconds for GMGN Sniping Notifications
 GMGN_POLL_INTERVAL = int(os.getenv("GMGN_POLL_INTERVAL", "60"))
 GMGN_TARGET_CHAIN = os.getenv("GMGN_TARGET_CHAIN", "bsc") # sol / bsc / base
+GMGN_MAX_AGE_HOURS = float(os.getenv("GMGN_MAX_AGE_HOURS", "4.0"))
+MIN_SMART_MONEY_CLUSTER = int(os.getenv("MIN_SMART_MONEY_CLUSTER", "3"))

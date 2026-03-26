@@ -46,17 +46,17 @@ class GMGNClient:
             logger.error(f"Error running GMGN command '{' '.join(args)}': {e}")
             return {}
 
-    async def get_trending_tokens(self, chain: str = "bsc", interval: str = "5m", limit: int = 50) -> list:
+    async def get_trending_tokens(self, chain: str = "bsc", interval: str = "51m", limit: int = 50, orderby: str = "swaps", direction: str = "desc") -> list:
         """Get trending tokens (sniper feed). Returns a list of dicts."""
-        logger.debug(f"Fetching GMGN trending tokens on {chain} (interval: {interval})")
+        logger.debug(f"Fetching GMGN trending tokens on {chain} (interval: {interval}, orderby: {orderby})")
         # Example API: gmgn-cli market trending --chain bsc --interval 5m --limit 50
         data = await self._run_command(
             "market", "trending", 
             "--chain", chain, 
             "--interval", interval, 
             "--limit", str(limit),
-            "--orderby", "swaps",
-            "--direction", "desc"
+            "--order-by", orderby,
+            "--direction", direction
         )
         # Data is a dict where the trending array is usually under a specific key, 
         # or it might directly be an array depending on the API schema.

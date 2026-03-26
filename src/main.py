@@ -47,10 +47,16 @@ async def token_monitor_loop():
     logger.info("Started Background Token Performance Monitor")
     while True:
         await asyncio.sleep(60)
-        if not tracked_tokens:
+        # Only render the table if we have officially sniped/owned tokens
+        owned_tokens = {k: v for k, v in tracked_tokens.items() if v.get("is_owned")}
+        if not owned_tokens:
             continue
-        logger.info("\033[1;95m--- 📊 POST-SNIPE TOKEN MONITOR ---\033[0m")
-        for token, entry in list(tracked_tokens.items()):
+            
+        logger.info("\n\033[1;95m" + "="*88 + "\033[0m")
+        logger.info("\033[1;95m| {:^10} | {:^15} | {:^10} | {:^10} | {:^12} | {:^15} |\033[0m".format("SYMBOL", "ADDRESS", "PNL (%)", "PEAK (%)", "PRICE", "MARKET CAP"))
+        logger.info("\033[1;95m" + "-"*88 + "\033[0m")
+        
+        for token, entry in list(owned_tokens.items()):
             try:
                 info = await client.get_token_info(settings.GMGN_TARGET_CHAIN, token)
                 if info:
@@ -60,16 +66,41 @@ async def token_monitor_loop():
                     change = ((price - entry_price) / entry_price) * 100 if entry_price > 0 else 0.0
                     
                     symbol = info.get("symbol", "UNK")
-                    color = "\033[92m+" if change >= 0 else "\033[91m"
-                    logger.info(f"💎 {symbol} ({token[:6]}...): {color}{change:.2f}%\033[0m | Price: ${price:<10.6f} | MC: ${mc:,.0f}")
+                    pnl_str = f"{change:+.2f}%"
+                    color = "\033[92m" if change >= 0 else "\033[91m"
+                    
+                    # Track Peak for Trailing SL
+                    if "peak_pnl" not in entry or change > entry["peak_pnl"]:
+                        entry["peak_pnl"] = change
+                    
+                    peak_str = f"{entry.get('peak_pnl', 0):+.2f}%"
+                    
+                    logger.info(f"| {symbol[:10]:<10} | {token[:6]}...{token[-4:]} | {color}{pnl_str:>10}\033[0m | {peak_str:>10} | ${price:<11.6f} | ${mc:>14,.0f} |")
                     
                     # Take Profit Engine
-                    if entry.get("is_owned") and not entry.get("tp_triggered"):
+                    if not entry.get("tp_triggered") and not entry.get("sl_triggered"):
                         tp_target = getattr(settings, "TAKE_PROFIT_PERCENT", 30.0)
+                        sl_target = -abs(getattr(settings, "STOP_LOSS_PERCENT", 20.0))
+                        
                         if change >= tp_target:
                             logger.info(f"\033[1;92m💰 TAKE PROFIT TRIGGERED! {symbol} hit +{change:.2f}% (Target: {tp_target}%)\033[0m")
                             entry["tp_triggered"] = True
                             # Phase 2: await trader.execute_sell(token, amount=100%)
+                        
+                        elif change <= sl_target:
+                            logger.warning(f"\033[1;91m🚨 STOP LOSS TRIGGERED! {symbol} hit {change:.2f}% (Limit: {sl_target}%)\033[0m")
+                            entry["sl_triggered"] = True
+                            # Phase 2: await trader.execute_sell(token, amount=100%)
+                        
+                        # ---- Trailing Stop Loss ----
+                        elif getattr(settings, "TRAILING_STOP_LOSS_PERCENT", 0) > 0:
+                            tsl_offset = getattr(settings, "TRAILING_STOP_LOSS_PERCENT", 15.0)
+                            peak = entry.get("peak_pnl", 0)
+                            if peak > 10.0: # Only trail if we are in significant profit (>10%)
+                                if change <= peak - tsl_offset:
+                                    logger.warning(f"\033[1;91m🚨 TRAILING STOP TRIGGERED! {symbol} hit {change:.2f}% (Peak was {peak:.2f}%, Trail: -{tsl_offset}%)\033[0m")
+                                    entry["sl_triggered"] = True
+                                    # Phase 2: await trader.execute_sell(token, amount=100%)
                             
                 else:
                     logger.warning(f"Failed to fetch update for {token[:6]}...")
@@ -118,7 +149,9 @@ async def main():
                 tracked_tokens[token_address] = {
                     "entry_price": float(gmgn_stats.get("price", 0)) if is_gmgn else 0.0,
                     "is_owned": False,
-                    "tp_triggered": False
+                    "tp_triggered": False,
+                    "sl_triggered": False,
+                    "peak_pnl": 0.0
                 }
                 # Keep tracking list manageable if it grows huge (optional safeguard)
                 if len(tracked_tokens) > 200:
