@@ -58,10 +58,20 @@ class BlockchainListener:
                     last_block = current_block
                 
                 # Wait before polling next blocks to avoid throttling
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
             except Exception as e:
-                logger.error(f"Error fetching block data: {e}")
-                await asyncio.sleep(5)
+                err_msg = str(e)
+                if "-32005" in err_msg or "limit exceeded" in err_msg.lower():
+                    logger.warning("RPC rate limit exceeded. Backing off for 12s...")
+                    try:
+                        # Resync last_block to current so we don't accumulate an oversized range
+                        last_block = await self.w3.eth.block_number
+                    except Exception:
+                        pass
+                    await asyncio.sleep(12)
+                else:
+                    logger.error(f"Error fetching block data: {e}")
+                    await asyncio.sleep(5)
                 
     def stop(self):
         self.is_running = False
