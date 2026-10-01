@@ -30,7 +30,7 @@ class KOLTracker:
         Decodes buyer from transaction initiator.
         """
         try:
-            swap_event_signature = self.w3.keccak(text="Swap(address,uint256,uint256,uint256,uint256,address)").hex()
+            swap_event_signature = "0x" + self.w3.keccak(text="Swap(address,uint256,uint256,uint256,uint256,address)").hex()
             
             latest_block = await self.w3.eth.block_number
             logs = await self.w3.eth.get_logs({

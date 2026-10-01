@@ -1,1 +1,1 @@
-{"balance": 100.94792442202034, "last_updated": "2026-03-21T17:28:13.026721"}
+{"balance": 41.859132541447465, "tp_multiplier": 1.2, "ml_filter_enabled": true, "ml_threshold": 0.6, "trading_mode": "PAPER", "trade_amount_bnb": 0.001, "trade_amount_usd": 10.0, "amount_currency": "BNB", "realism_mode": false, "last_updated": "2026-08-09T00:39:27.424984"}

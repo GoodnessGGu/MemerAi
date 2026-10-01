@@ -2,6 +2,7 @@ import logging
 import httpx
 from web3 import AsyncWeb3
 from src.utils.web3_utils import get_async_w3
+import src.config.settings as settings
 from src.config.settings import MAX_BUY_TAX, MAX_SELL_TAX, RPC_URL
 
 logger = logging.getLogger(__name__)
@@ -86,8 +87,12 @@ async def check_token_safety(token_address: str, pair_address: str = None, clien
         symbol = token_info.get("token_symbol", "").upper()
         if any(x in name or x in symbol for x in ["ELON", "MUSK", "MARS", "XAI"]): result["meta"] = "Elon Meta 🚀"
         elif any(x in name or x in symbol for x in ["GPT", "AI", "BOT", "NEURAL"]): result["meta"] = "AI Meta 🧠"
-        elif any(x in name or x in symbol for x in ["DOGE", "SHIB", "PEPE", "FLOKI"]): result["meta"] = "Meme Meta 🐸"
+        elif any(x in name or x in symbol for x in ["DOGE", "SHIB", "PEPE", "FLOKI", "MOODENG", "PNUT", "CHILLGUY", "NEIRO"]): result["meta"] = "Meme Meta 🐸"
         elif any(x in name or x in symbol for x in ["MOON", "SAFE", "GALAXY"]): result["meta"] = "Space Meta 🌌"
+        elif any(x in name or x in symbol for x in ["HALLOWEEN", "PUMPKIN", "SPOOKY", "GHOST", "WEEN", "HAUNT", "WITCH"]): result["meta"] = "Halloween Meta 🎃"
+        elif any(x in name or x in symbol for x in ["CZ", "BINANCE", "BNB"]): result["meta"] = "Binance/CZ Meta 💛"
+        elif any(x in name or x in symbol for x in ["TRUMP", "HARRIS", "BIDEN", "VOTE", "USA", "ELECTION"]): result["meta"] = "PolitiFi Meta 🇺🇸"
+        elif any(x in name or x in symbol for x in ["HAALAND", "CR7", "MESSI", "FOOTBALL", "SOCCER"]): result["meta"] = "Sports Meta ⚽"
 
         # PERFORM HEURISTICS CHECKS
         fatal_risks = []
@@ -120,25 +125,43 @@ async def check_token_safety(token_address: str, pair_address: str = None, clien
             if h_addr not in [addr.lower() for addr in BURN_ADDRESSES] and h_pct > 25:
                 warning_risks.append(f"whale_{h_pct:.0f}%")
 
-        # 5. LP Lock Check (Warning only)
+        # 5. LP Lock & Burn Check (GoPlus + On-chain)
+        goplus_locked_pct = 0.0
+        lp_holders = token_info.get("lp_holders", [])
+        for h in lp_holders:
+            try:
+                is_locked = int(h.get("is_locked", 0))
+                addr = h.get("address", "").lower()
+                pct = float(h.get("percent", 0) or 0) * 100
+                if is_locked == 1 or addr in [b.lower() for b in BURN_ADDRESSES]:
+                    goplus_locked_pct += pct
+            except Exception:
+                continue
+
+        onchain_lp_pct = 0.0
         if pair_address and w3:
             lp_res = await check_lp_lock(w3, pair_address)
-            if lp_res["percent"] < 50:
-                warning_risks.append(f"lp_unlocked_{lp_res['percent']:.0f}%")
+            onchain_lp_pct = lp_res["percent"]
             
+        effective_lp_lock_pct = max(goplus_locked_pct, onchain_lp_pct)
+        result["lp_lock_percent"] = effective_lp_lock_pct
+
+        min_lock_required = getattr(settings, "MIN_LP_LOCK_PERCENT", 80.0)
+        require_lock = getattr(settings, "REQUIRE_LOCKED_LP", True)
+
+        if require_lock and effective_lp_lock_pct < min_lock_required:
+            fatal_risks.append(f"unlocked_lp_{effective_lp_lock_pct:.0f}%_min_{min_lock_required:.0f}%")
+        elif effective_lp_lock_pct < 50:
+            warning_risks.append(f"low_lp_lock_{effective_lp_lock_pct:.0f}%")
+
         # Overall result
         result["risk_flags"] = fatal_risks + warning_risks
         result["fatal_count"] = len(fatal_risks)
         result["warning_count"] = len(warning_risks)
-        result["is_safe"] = len(fatal_risks) == 0 # Permissive logic: safe if no fatals
-        
+        result["is_safe"] = len(fatal_risks) == 0
+
         return result
-            
-    except Exception as e:
-        logger.error(f"Error checking token safety: {e}")
-        result["risk_flags"].append("exception")
-        return result
-            
+
     except httpx.RequestError as exc:
         logger.error(f"HTTP exception while requesting GoPlus: {exc}")
         result["risk_flags"].append("http_exception")

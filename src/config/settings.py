@@ -4,10 +4,16 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# RPC and Wallet Configuration
+# BSC RPC and Wallet Configuration
 RPC_URL = os.getenv("RPC_URL", "https://bsc-dataseed.binance.org/")
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
+
+# Solana RPC and Wallet Configuration
+SOLANA_RPC_URL = os.getenv("SOLANA_RPC_URL", "https://api.mainnet-beta.solana.com")
+SOLANA_WALLET_ADDRESS = os.getenv("SOLANA_WALLET_ADDRESS", "")
+SOLANA_PRIVATE_KEY = os.getenv("SOLANA_PRIVATE_KEY", "")
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_ADMIN_ID = os.getenv("TELEGRAM_ADMIN_ID", "")
 
@@ -34,7 +40,9 @@ STOP_LOSS_PERCENT = 30.0      # -30% stop loss
 TRAILING_STOP_LOSS_PERCENT = 15.0 # Trailing 15% from peak
 
 # Simulation / Action Settings
-PERMISSIVE_MODE = True        # If True, allows tokens with "Warning" risks (Unlocked LP, Whales)
+PERMISSIVE_MODE = True        # If True, allows tokens with "Warning" risks (Whales, Mintable)
+REQUIRE_LOCKED_LP = os.getenv("REQUIRE_LOCKED_LP", "True").lower() == "true" # Enforce LP lock/burn check
+MIN_LP_LOCK_PERCENT = float(os.getenv("MIN_LP_LOCK_PERCENT", "80.0"))         # Minimum 80% locked/burnt LP
 
 # GMGN AI Integration Settings
 USE_GMGN_SOURCE = os.getenv("USE_GMGN_SOURCE", "True").lower() == "true"
@@ -43,3 +51,10 @@ GMGN_POLL_INTERVAL = int(os.getenv("GMGN_POLL_INTERVAL", "60"))
 GMGN_TARGET_CHAIN = os.getenv("GMGN_TARGET_CHAIN", "bsc") # sol / bsc / base
 GMGN_MAX_AGE_HOURS = float(os.getenv("GMGN_MAX_AGE_HOURS", "4.0"))
 MIN_SMART_MONEY_CLUSTER = int(os.getenv("MIN_SMART_MONEY_CLUSTER", "3"))
+# Minimum weighted Smart Money Score (0-100) required when ML is disabled
+SMART_MONEY_MIN_SCORE = float(os.getenv("SMART_MONEY_MIN_SCORE", "35.0"))
+
+# Halloween Seasonal & Liquidity Ratio Safeguards
+HALLOWEEN_META_BOOST = os.getenv("HALLOWEEN_META_BOOST", "True").lower() == "true"
+MIN_LIQUIDITY_TO_MCAP_RATIO = float(os.getenv("MIN_LIQUIDITY_TO_MCAP_RATIO", "0.04")) # Reject tokens with < 4% liquidity vs FDV (prevents $300M illiquid wick traps)
+

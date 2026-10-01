@@ -24,7 +24,8 @@ class GMGNListener:
         
         while self.is_running:
             try:
-                # 1. Fetch top trending tokens (e.g. 5m interval)
+                logger.info(f"🔄 Polling GMGN for {settings.GMGN_TARGET_CHAIN} targets (Filters: <4h, 3+ Smart Wallets)...")
+                # 1. Fetch top trending tokens (e.g. 1h interval)
                 # We use a short interval to get "Active" tokens
                 trending_tokens = await self.client.get_trending_tokens(
                     chain=settings.GMGN_TARGET_CHAIN, 
@@ -40,6 +41,10 @@ class GMGNListener:
                     max_age_sec = int(getattr(settings, "GMGN_MAX_AGE_HOURS", 4.0) * 3600)
                     min_cluster = int(getattr(settings, "MIN_SMART_MONEY_CLUSTER", 3))
 
+                    skipped_age = 0
+                    skipped_cluster = 0
+                    found_new = 0
+
                     for token_data in trending_tokens:
                         token_address = token_data.get("address")
                         pool_address = token_data.get("pool_address", None)
@@ -49,24 +54,29 @@ class GMGNListener:
                             
                         # ---- Pro Filter 1: Age Filter (0 - 4 hrs) ----
                         open_time = token_data.get("open_time") or token_data.get("created_at") or 0
-                        if open_time > 0:
-                            age_sec = current_time - int(open_time)
-                            if age_sec > max_age_sec:
-                                logger.debug(f"Skipping {token_address[:8]}: Too old ({age_sec/3600:.1f}h)")
-                                continue
-                            if age_sec < 0: # Future timestamp?
-                                continue
+                        if open_time == 0:
+                            skipped_age += 1
+                            continue
+                            
+                        age_sec = current_time - int(open_time)
+                        if age_sec > max_age_sec:
+                            skipped_age += 1
+                            continue
+                        if age_sec < 0: # Future timestamp?
+                            continue
                         
                         # ---- Pro Filter 2: Smart Money Cluster Detection ----
                         smart_degen_count = token_data.get("smart_degen_count", 0)
                         if smart_degen_count < min_cluster:
-                            logger.debug(f"Skipping {token_address[:8]}: Low cluster density ({smart_degen_count} < {min_cluster})")
+                            skipped_cluster += 1
                             continue
 
                         # If we haven't processed this token recently
                         self.processed_tokens.add(token_address)
+                        found_new += 1
                         
-                        logger.info(f"🚀 PRO SIGNAL: Detected {token_address[:8]} | Age: {(current_time-int(open_time))/60:.1f}m | Smart Degens: {smart_degen_count}")
+                        age_m = age_sec / 60
+                        logger.info(f"🚀 PRO SIGNAL: Detected {token_address[:8]} | Age: {age_m:.1f}m | Smart Degens: {smart_degen_count}")
                         
                         timestamp = current_time
                         pair_data = {
@@ -80,6 +90,9 @@ class GMGNListener:
                         
                         if self.callback:
                             asyncio.create_task(self.callback(pair_data))
+                    
+                    if found_new > 0 or skipped_age > 0 or skipped_cluster > 0:
+                        logger.info(f"📊 Poll Summary: {found_new} New Signals | {skipped_age} Skipped (Age) | {skipped_cluster} Skipped (Low Cluster)")
                             
             except Exception as e:
                 logger.error(f"Error checking GMGN trending: {e}")

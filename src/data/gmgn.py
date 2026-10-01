@@ -1,4 +1,5 @@
 import asyncio
+from asyncio import subprocess
 import json
 import logging
 import os
@@ -9,25 +10,23 @@ logger = logging.getLogger(__name__)
 class GMGNClient:
     """Wrapper around the GMGN OpenAPI CLI to fetch token data."""
     def __init__(self):
-        # We rely on gmgn-cli being in PATH
-        self.cli_path = shutil.which("gmgn-cli")
-        if not self.cli_path:
-            # Fallback for Windows if npx is available
-            # Assume 'gmgn-cli.cmd' or similar is accessible
-            self.cli_path = "gmgn-cli"
+        # We use the local patched skills directory
+        self.skills_path = os.path.join(os.getcwd(), "temp_gmgn_skills")
+        self.index_ts = os.path.join(self.skills_path, "src", "index.ts")
             
     async def _run_command(self, *args) -> dict:
         """Runs a gmgn-cli command with --raw and parses JSON output."""
         try:
-            # Use shell=True specifically on Windows if calling a .cmd file directly
-            use_shell = os.name == 'nt' and "gmgn-cli" in self.cli_path
-            full_args = [self.cli_path] + list(args) + ["--raw"]
+            # Detected OS to use correct npx command
+            npx_cmd = "npx.cmd" if os.name == "nt" else "npx"
+            full_args = [npx_cmd, "tsx", self.index_ts] + list(args) + ["--raw"]
             
             # Subprocess
             process = await asyncio.create_subprocess_exec(
                 *full_args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=self.skills_path
             )
             stdout, stderr = await process.communicate()
             
@@ -46,7 +45,7 @@ class GMGNClient:
             logger.error(f"Error running GMGN command '{' '.join(args)}': {e}")
             return {}
 
-    async def get_trending_tokens(self, chain: str = "bsc", interval: str = "51m", limit: int = 50, orderby: str = "swaps", direction: str = "desc") -> list:
+    async def get_trending_tokens(self, chain: str = "bsc", interval: str = "1h", limit: int = 50, orderby: str = "swaps", direction: str = "desc") -> list:
         """Get trending tokens (sniper feed). Returns a list of dicts."""
         logger.debug(f"Fetching GMGN trending tokens on {chain} (interval: {interval}, orderby: {orderby})")
         # Example API: gmgn-cli market trending --chain bsc --interval 5m --limit 50

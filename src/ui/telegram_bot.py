@@ -47,13 +47,13 @@ class MemerTelegramBot:
                 await self.app.start()
                 await self.app.updater.start_polling()
                 break  # Success
-            except (NetworkError, TimedOut) as e:
+            except Exception as e:
                 if attempt < max_retries:
-                    wait = attempt * 5
-                    logger.warning(f"Telegram connection failed (attempt {attempt}/{max_retries}): {e}. Retrying in {wait}s...")
+                    wait = attempt * 3
+                    logger.warning(f"Telegram connection attempt {attempt}/{max_retries} failed: {e}. Retrying in {wait}s...")
                     await asyncio.sleep(wait)
                 else:
-                    logger.error(f"Telegram failed after {max_retries} attempts. Bot disabled.")
+                    logger.error(f"Telegram initialization failed after {max_retries} attempts. Continuing without Telegram alerts.")
                     self.app = None
                     return
         
@@ -120,11 +120,18 @@ class MemerTelegramBot:
             
             if mode == "REAL":
                 try:
-                    # Fetch Real BNB Balance for display
+                    # Fetch Real BNB Balance
                     w3 = self.paper_trader.feature_extractor.w3
-                    balance_wei = await w3.eth.get_balance(WALLET_ADDRESS)
+                    balance_wei = await w3.eth.get_balance(WALLET_ADDRESS) if WALLET_ADDRESS else 0
                     bnb_balance = balance_wei / 1e18
                     
+                    # Fetch Real SOL Balance if connected
+                    sol_balance_str = "N/A (Key missing)"
+                    if hasattr(self, 'solana_trader') and self.solana_trader and self.solana_trader.is_wallet_connected():
+                        sol_bal = await self.solana_trader.get_sol_balance()
+                        sol_addr = self.solana_trader.public_key_str
+                        sol_balance_str = f"`{sol_bal:.4f} SOL` ({sol_addr[:4]}...{sol_addr[-4:]})"
+
                     # Entry Size display depends on currency
                     if self.paper_trader.amount_currency == "USD":
                         entry_disp = f"${self.paper_trader.trade_amount_usd:.2f} (USD)"
@@ -134,9 +141,10 @@ class MemerTelegramBot:
                     realism_status = "STRESS TEST 🎲" if self.paper_trader.realism_mode else "LIVE EXECUTION ⚠️"
 
                     balance_text = (
-                        f"🏦 *On-Chain Wallet Balance*\n\n"
-                        f"├ Address: `{WALLET_ADDRESS[:6]}...{WALLET_ADDRESS[-4:]}`\n"
-                        f"├ Balance: `{bnb_balance:.4f} BNB` 💰\n"
+                        f"🏦 *Live Wallet Balances*\n\n"
+                        f"🟡 *BSC Wallet:* `{bnb_balance:.4f} BNB`\n"
+                        f"├ Address: `{WALLET_ADDRESS[:6]}...{WALLET_ADDRESS[-4:] if WALLET_ADDRESS else ''}`\n\n"
+                        f"🟣 *Solana Wallet:* {sol_balance_str}\n\n"
                         f"├ Entry Size: `{entry_disp}` 🚀\n"
                         f"├ Target: `+{((self.paper_trader.tp_multiplier - 1) * 100):.0f}%` 🎯\n"
                         f"└ Status: `{realism_status}`"
@@ -160,6 +168,12 @@ class MemerTelegramBot:
             if not self.paper_trader.active_trades:
                 await update.message.reply_text("💤 *No active trades.* Monitoring the waves... 🌊", parse_mode="Markdown")
                 return
+            
+            # Refresh real-time market prices for active positions
+            try:
+                await self.paper_trader.update_active_trade_prices()
+            except Exception as e:
+                logger.warning(f"Failed to refresh prices for active trades: {e}")
             
             await update.message.reply_text(f"📡 *Monitoring {len(self.paper_trader.active_trades)} Active Positions:*", parse_mode="Markdown")
             

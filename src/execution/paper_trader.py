@@ -128,28 +128,41 @@ class PaperTrader:
         if self.on_event:
             asyncio.create_task(self.on_event("BUY", trade))
 
-    async def manual_close(self, symbol: str):
-        """Allow manual exit from Telegram."""
+    async def manual_close(self, token_or_symbol: str):
+        """Force-close a trade by token address or symbol (Telegram)."""
+        key = (token_or_symbol or "").strip()
+        if not key:
+            return False
+
         target_trade = None
         for trade in self.active_trades:
-            if trade["symbol"].upper() == symbol.upper():
+            if trade["token"].lower() == key.lower() or trade["symbol"].upper() == key.upper():
                 target_trade = trade
                 break
-        
-        if target_trade:
-            # Refresh price one last time
-            new_price = await self.feature_extractor.get_token_price_bnb(target_trade["pair"])
-            if new_price > 0:
-                target_trade["current_price"] = new_price
-            
-            target_trade["status"] = "MANUAL_CLOSE"
-            self.active_trades.remove(target_trade)
-            self.history.append(target_trade)
-            self._log_outcome(target_trade)
-            if self.on_event:
-                asyncio.create_task(self.on_event("SELL", target_trade))
-            return True
-        return False
+
+        if not target_trade:
+            return False
+
+        new_price = await self.feature_extractor.get_token_price_bnb(target_trade["pair"])
+        if new_price > 0:
+            target_trade["current_price"] = new_price
+
+        target_trade["status"] = "MANUAL_CLOSE"
+        self.active_trades.remove(target_trade)
+        if self.on_event:
+            asyncio.create_task(self.on_event("SELL", target_trade))
+        return True
+
+    async def update_active_trade_prices(self):
+        """Asynchronously refresh current market prices for all open trades."""
+        for trade in self.active_trades:
+            try:
+                new_price = await self.feature_extractor.get_token_price_bnb(trade["pair"])
+                if new_price > 0:
+                    trade["current_price"] = new_price
+                    trade["max_price"] = max(trade.get("max_price", new_price), new_price)
+            except Exception as e:
+                logger.warning(f"Error updating price for trade {trade['symbol']}: {e}")
 
     async def monitor_step(self):
         """Check all active trades and return a displayable table."""
@@ -167,6 +180,9 @@ class PaperTrader:
             profit_pct = (new_price - trade["buy_price"]) / trade["buy_price"] * 100
             elapsed_mins = (datetime.now() - trade["start_time"]).total_seconds() / 60
 
+            # Dynamic Timeout Limit: 120 mins for Verified IP tokens, 15 mins for standard micro-caps
+            max_hold_mins = 120 if trade.get("is_ip_verified") else 15
+
             if new_price >= trade["buy_price"] * self.tp_multiplier:
                 tp_pct = (self.tp_multiplier - 1) * 100
                 console.print(f"[bold gold1]🎯 [+{tp_pct:.0f}% HIT!][/bold gold1] {trade['symbol']} (+{profit_pct:.1f}%)")
@@ -176,7 +192,11 @@ class PaperTrader:
                 console.print(f"[bold red]💀 [STOP LOSS][/bold red] {trade['symbol']} ({profit_pct:.1f}%)")
                 trade["status"] = "STOP_LOSS"
                 to_remove.append(trade)
-            elif elapsed_mins >= 60:
+            elif elapsed_mins >= 10 and -5.0 <= profit_pct <= 5.0 and not trade.get("is_ip_verified"):
+                console.print(f"[bold cyan]⚡ [STAGNANT EXIT][/bold cyan] {trade['symbol']} ({profit_pct:.1f}% after {elapsed_mins:.0f}m)")
+                trade["status"] = "STAGNANT_EXIT"
+                to_remove.append(trade)
+            elif elapsed_mins >= max_hold_mins:
                 console.print(f"[bold yellow]🕒 [TIMEOUT][/bold yellow] {trade['symbol']} ({profit_pct:.1f}%)")
                 trade["status"] = "TIMEOUT"
                 to_remove.append(trade)
@@ -239,7 +259,7 @@ class PaperTrader:
             profit_pct = (trade["current_price"] - trade["buy_price"]) / trade["buy_price"] * 100
             pnl_style = "green" if profit_pct >= 0 else "red"
             age = int((datetime.now() - trade["start_time"]).total_seconds() / 60)
-            
+
             table.add_row(
                 trade["symbol"],
                 f"{trade['buy_price']:.8f}",
@@ -249,42 +269,23 @@ class PaperTrader:
                 f"{trade['liquidity']:.2f}",
                 f"{age}m"
             )
-    async def manual_close(self, token_address):
-        """Force close a trade manually via TG."""
-        target_trade = None
-        for t in self.active_trades:
-            if t["token"].lower() == token_address.lower():
-                target_trade = t
-                break
-        
-        if target_trade:
-            # Update price one last time
-            new_price = await self.feature_extractor.get_token_price_bnb(target_trade["pair"])
-            if new_price > 0:
-                target_trade["current_price"] = new_price
-            
-            target_trade["status"] = "MANUAL_CLOSE"
-            self.active_trades.remove(target_trade)
-            self.history.append(target_trade)
-            self._log_outcome(target_trade)
-            
-            if self.on_event:
-                asyncio.create_task(self.on_event("SELL", target_trade))
-            return True
-        return False
+        return table
 
     def _generate_summary_table(self):
         """Generates a summary of history from CSV for persistent stats."""
         total = 0
         hits = 0
-        
+        tp_label = int((self.tp_multiplier - 1) * 100)
+
         try:
             if os.path.exists(OUTCOMES_FILE):
                 with open(OUTCOMES_FILE, "r") as f:
                     reader = csv.DictReader(f)
                     for row in reader:
                         total += 1
-                        if row["status"] == "HIT_20PCT":
+                        status = row.get("status", "")
+                        # Count any take-profit hit (HIT_20PCT, HIT_30PCT, etc.)
+                        if status.startswith("HIT_") or status == f"HIT_{tp_label}PCT":
                             hits += 1
         except Exception:
             pass
@@ -292,11 +293,11 @@ class PaperTrader:
         table = Table(title="📊 Lifetime Performance Summary", border_style="green")
         table.add_column("Metric", style="white")
         table.add_column("Value", justify="right", style="cyan")
-        
+
         win_rate = (hits / total * 100) if total > 0 else 0
-        
+
         table.add_row("Total Trades", str(total))
-        table.add_row("+20% Hits", f"[bold gold1]{hits}[/bold gold1]")
+        table.add_row("TP Hits", f"[bold gold1]{hits}[/bold gold1]")
         table.add_row("Win Rate", f"{win_rate:.1f}%")
         table.add_row("Virtual Balance", f"[bold green]${self.balance:.2f}[/bold green]")
         return table
