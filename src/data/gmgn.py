@@ -16,6 +16,7 @@ class GMGNClient:
             
     async def _run_command(self, *args) -> dict:
         """Runs a gmgn-cli command with --raw and parses JSON output."""
+        try:
             # Detected OS to use correct npx command
             npx_cmd = "npx.cmd" if os.name == "nt" else "npx"
             if not shutil.which(npx_cmd):
