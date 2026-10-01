@@ -107,6 +107,7 @@ async def main():
     narrative_engine = NarrativeEngine(db)
     attention_engine = AttentionEngine()
     event_engine = EventEngine(db)
+    wallet_engine = WalletIntelligenceEngine(db)
     from src.services.ip_detector import IPRightsEngine
     ip_engine = IPRightsEngine(db)
     feature_generator = FeatureGenerator()
